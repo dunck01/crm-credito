@@ -533,7 +533,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
                 <input
                   value={form.cpf}
                   onChange={handleCpfChange}
-                  onBlur={lookupCpf}
+                  onBlur={() => lookupCpf()}
                   placeholder="000.000.000-00 ou 00.000.000/0000-00"
                   className="font-mono"
                   maxLength={18}
