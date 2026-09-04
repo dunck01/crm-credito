@@ -62,7 +62,7 @@ App em [http://localhost:3001](http://localhost:3001).
 3. Configure:
    - **Framework Preset:** Next.js
    - **Root Directory:** `apps/web`
-   - **Node.js:** 20.x
+   - **Node.js:** 24.x
 4. Environment Variables:
 
 | Nome | Valor |

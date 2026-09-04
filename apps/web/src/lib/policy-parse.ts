@@ -109,7 +109,7 @@ function parseMoneyToken(raw: string) {
 }
 
 function findPersonCpf(text: string) {
-  const hits = [...text.matchAll(/\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/g)];
+  const hits = Array.from(text.matchAll(/\b(\d{3}\.?\d{3}\.?\d{3}-?\d{2})\b/g));
   const people: { digits: string; index: number }[] = [];
   for (const match of hits) {
     if (match.index == null || !isValidCpf(match[1])) continue;
@@ -213,9 +213,9 @@ function findEmail(text: string) {
 
 function findCep(text: string) {
   const certificado = new Set(
-    [...text.matchAll(/\bCertificado\s*\n\s*(\d{5,12})\b/gi)].map((m) => digitsOnly(m[1]))
+    Array.from(text.matchAll(/\bCertificado\s*\n\s*(\d{5,12})\b/gi)).map((m) => digitsOnly(m[1]))
   );
-  const hits = [...text.matchAll(/\b(\d{5}-\d{3})(?=[A-Z]{2}\b|\b)/g)];
+  const hits = Array.from(text.matchAll(/\b(\d{5}-\d{3})(?=[A-Z]{2}\b|\b)/g));
   const dadosIdx = text.search(/Dados do Segurado/i);
   const scored = hits
     .map((m) => {
@@ -277,7 +277,7 @@ function findValue(text: string) {
   const demonstrativo = text.match(/TOTAL:\s*([\d.]+,\d{2})/i);
   if (demonstrativo) return parseMoneyToken(demonstrativo[1]);
 
-  const amounts = [...text.matchAll(/R\$\s*[*]*([\d.]+,\d{2})/g)]
+  const amounts = Array.from(text.matchAll(/R\$\s*[*]*([\d.]+,\d{2})/g))
     .map((m) => parseMoneyToken(m[1]))
     .filter((n): n is number => n != null);
   for (let i = 0; i + 2 < amounts.length; i += 1) {
