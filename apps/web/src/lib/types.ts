@@ -76,3 +76,22 @@ export type ClientRecord = {
   history: HistoryNote[];
   cases: InsuranceCase[];
 };
+
+export type SellerTeamStat = {
+  userId: string;
+  name: string;
+  clientsCount: number;
+  casesCount: number;
+  statusCounts: Record<string, number>;
+  insuranceValue: number;
+  receivedClientAmount: number;
+  companyAmount: number;
+  myCommission: number;
+  doNotContactCount: number;
+};
+
+export type TenantStatsPayload = {
+  team: SellerTeamStat[];
+  orphanClientsCount: number;
+};
+

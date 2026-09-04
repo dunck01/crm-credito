@@ -2,16 +2,15 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import { clientInclude, serializeClient } from '@/lib/api-serialize';
 import { digitsOnly } from '@/lib/format';
-import { canSeeAllClients, requireTenantUser } from '@/lib/session';
+import { ownsClient, requireTenantUser } from '@/lib/session';
 
-async function loadOwnedClient(clientId: string, tenantId: string, userId: string, role: string) {
+async function loadOwnedClient(clientId: string, tenantId: string, userId: string) {
   const client = await prisma.client.findFirst({
     where: { id: clientId, tenantId },
     include: clientInclude,
   });
-  if (!client) return { error: 'Cliente não encontrado.', status: 404 as const };
-  if (!canSeeAllClients(role) && client.assignedUserId !== userId) {
-    return { error: 'Você só pode acessar clientes da sua carteira.', status: 403 as const };
+  if (!client || !ownsClient({ id: userId }, client)) {
+    return { error: 'Cliente não encontrado.', status: 404 as const };
   }
   return { client };
 }
@@ -20,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
 
-  const result = await loadOwnedClient(params.id, user.tenantId, user.id, user.role);
+  const result = await loadOwnedClient(params.id, user.tenantId, user.id);
   if ('error' in result && result.error) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
@@ -31,7 +30,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
 
-  const result = await loadOwnedClient(params.id, user.tenantId, user.id, user.role);
+  const result = await loadOwnedClient(params.id, user.tenantId, user.id);
   if ('error' in result && result.error) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }
@@ -43,12 +42,14 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     if (body.name !== undefined) data.name = String(body.name || '').trim();
     if (body.cpf !== undefined) {
       const cpf = digitsOnly(body.cpf);
-      if (cpf.length !== 11) return NextResponse.json({ error: 'CPF inválido.' }, { status: 400 });
+      if (cpf.length !== 11 && cpf.length !== 14) {
+        return NextResponse.json({ error: 'CPF/CNPJ inválido. Informe 11 ou 14 dígitos.' }, { status: 400 });
+      }
       if (cpf !== result.client!.cpf) {
         const clash = await prisma.client.findFirst({
           where: { tenantId: user.tenantId, cpf, NOT: { id: params.id } },
         });
-        if (clash) return NextResponse.json({ error: 'Já existe um cliente com este CPF.' }, { status: 409 });
+        if (clash) return NextResponse.json({ error: 'Já existe um cliente com este CPF nesta mesa.' }, { status: 409 });
       }
       data.cpf = cpf;
     }
@@ -67,9 +68,6 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     } else if (body.doNotContactReason !== undefined) {
       data.doNotContactReason = body.doNotContactReason || null;
     }
-    if (canSeeAllClients(user.role) && body.assignedUserId !== undefined) {
-      data.assignedUserId = body.assignedUserId || null;
-    }
 
     const updated = await prisma.client.update({
       where: { id: params.id },
@@ -86,10 +84,14 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
-  if (!canSeeAllClients(user.role)) {
-    return NextResponse.json({ error: 'Apenas administradores podem excluir clientes.' }, { status: 403 });
+
+  const client = await prisma.client.findFirst({
+    where: { id: params.id, tenantId: user.tenantId },
+  });
+  if (!client || !ownsClient(user, client)) {
+    return NextResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
   }
 
-  await prisma.client.deleteMany({ where: { id: params.id, tenantId: user.tenantId } });
+  await prisma.client.delete({ where: { id: params.id } });
   return NextResponse.json({ success: true });
 }

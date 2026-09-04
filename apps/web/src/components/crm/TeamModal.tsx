@@ -57,7 +57,15 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
   };
 
   const remove = async (id: string) => {
-    if (!confirm('Remover este membro?')) return;
+    const member = users.find((u) => u.id === id);
+    const label = member?.name || 'este membro';
+    if (
+      !confirm(
+        `Remover ${label}? A carteira dele passa para você, para nenhum cliente ficar sem responsável.`
+      )
+    ) {
+      return;
+    }
     const res = await fetch(`/api/tenant/users?id=${id}`, { method: 'DELETE' });
     if (res.ok) onChanged();
   };

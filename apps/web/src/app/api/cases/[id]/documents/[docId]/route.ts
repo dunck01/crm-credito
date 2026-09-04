@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
-import { canSeeAllClients, requireTenantUser } from '@/lib/session';
+import { ownsClient, requireTenantUser } from '@/lib/session';
 
 export async function GET(
   _req: Request,
@@ -14,9 +14,8 @@ export async function GET(
     include: { case: { include: { client: true } } },
   });
 
-  if (!doc) return NextResponse.json({ error: 'Documento não encontrado.' }, { status: 404 });
-  if (!canSeeAllClients(user.role) && doc.case.client.assignedUserId !== user.id) {
-    return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
+  if (!doc || !ownsClient(user, doc.case.client)) {
+    return NextResponse.json({ error: 'Documento não encontrado.' }, { status: 404 });
   }
 
   const bytes = Buffer.from(doc.data);
@@ -41,9 +40,8 @@ export async function DELETE(
     include: { case: { include: { client: true } } },
   });
 
-  if (!doc) return NextResponse.json({ error: 'Documento não encontrado.' }, { status: 404 });
-  if (!canSeeAllClients(user.role) && doc.case.client.assignedUserId !== user.id) {
-    return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
+  if (!doc || !ownsClient(user, doc.case.client)) {
+    return NextResponse.json({ error: 'Documento não encontrado.' }, { status: 404 });
   }
 
   await prisma.caseDocument.delete({ where: { id: doc.id } });

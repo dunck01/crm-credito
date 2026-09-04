@@ -1,6 +1,5 @@
 import { getServerSession } from 'next-auth';
 import { authOptions } from './auth';
-import { isAdminRole } from './constants';
 
 export type AuthUser = {
   id: string;
@@ -24,6 +23,18 @@ export async function requireTenantUser() {
   return { ...user, tenantId: user.tenantId };
 }
 
-export function canSeeAllClients(role?: string | null) {
-  return isAdminRole(role);
+export function ownsClient(
+  user: { id: string },
+  client: { assignedUserId: string | null }
+) {
+  return client.assignedUserId === user.id;
 }
+
+export function canManageTeam(role?: string | null) {
+  return role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN';
+}
+
+export function canSeeTeamAggregates(role?: string | null) {
+  return canManageTeam(role);
+}
+

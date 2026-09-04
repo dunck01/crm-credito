@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma, CaseStatus } from '@crm-credito/database';
 import { serializeCase } from '@/lib/api-serialize';
 import { parseMoney } from '@/lib/format';
-import { canSeeAllClients, requireTenantUser } from '@/lib/session';
+import { ownsClient, requireTenantUser } from '@/lib/session';
 import { CASE_STAGES } from '@/lib/constants';
 
 const VALID_STATUS = new Set(CASE_STAGES.map((s) => s.key));
@@ -20,9 +20,8 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
     where: { id: params.id, tenantId: user.tenantId },
     include: { client: true },
   });
-  if (!existing) return NextResponse.json({ error: 'Caso não encontrado.' }, { status: 404 });
-  if (!canSeeAllClients(user.role) && existing.client.assignedUserId !== user.id) {
-    return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
+  if (!existing || !ownsClient(user, existing.client)) {
+    return NextResponse.json({ error: 'Caso não encontrado.' }, { status: 404 });
   }
 
   try {
@@ -102,10 +101,15 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 export async function DELETE(_req: Request, { params }: { params: { id: string } }) {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
-  if (!canSeeAllClients(user.role)) {
-    return NextResponse.json({ error: 'Apenas administradores podem excluir casos.' }, { status: 403 });
+
+  const existing = await prisma.insuranceCase.findFirst({
+    where: { id: params.id, tenantId: user.tenantId },
+    include: { client: true },
+  });
+  if (!existing || !ownsClient(user, existing.client)) {
+    return NextResponse.json({ error: 'Caso não encontrado.' }, { status: 404 });
   }
 
-  await prisma.insuranceCase.deleteMany({ where: { id: params.id, tenantId: user.tenantId } });
+  await prisma.insuranceCase.delete({ where: { id: params.id } });
   return NextResponse.json({ success: true });
 }

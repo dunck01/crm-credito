@@ -1,8 +1,9 @@
 'use client';
 
+import { useCallback, useEffect, useState } from 'react';
 import { CASE_STAGES } from '@/lib/constants';
 import { fmtMoney } from '@/lib/format';
-import type { ClientRecord } from '@/lib/types';
+import type { ClientRecord, SellerTeamStat, TenantStatsPayload } from '@/lib/types';
 import {
   TrendingUp,
   DollarSign,
@@ -11,13 +12,63 @@ import {
   ArrowUpRight,
   Clock,
   ShieldCheck,
+  Users,
 } from 'lucide-react';
 
 type Props = {
   clients: ClientRecord[];
+  isAdmin?: boolean;
+  onOrphansClaimed?: () => void;
 };
 
-export function DashboardView({ clients }: Props) {
+function parseTeamStats(data: TenantStatsPayload | SellerTeamStat[] | null): {
+  team: SellerTeamStat[];
+  orphanClientsCount: number;
+} {
+  if (Array.isArray(data)) return { team: data, orphanClientsCount: 0 };
+  if (data && Array.isArray(data.team)) {
+    return { team: data.team, orphanClientsCount: data.orphanClientsCount || 0 };
+  }
+  return { team: [], orphanClientsCount: 0 };
+}
+
+export function DashboardView({ clients, isAdmin, onOrphansClaimed }: Props) {
+  const [teamStats, setTeamStats] = useState<SellerTeamStat[]>([]);
+  const [orphanClientsCount, setOrphanClientsCount] = useState(0);
+  const [loadingTeam, setLoadingTeam] = useState(false);
+  const [claiming, setClaiming] = useState(false);
+
+  const loadTeam = useCallback(() => {
+    if (!isAdmin) return;
+    setLoadingTeam(true);
+    fetch('/api/tenant/stats')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        const parsed = parseTeamStats(data);
+        setTeamStats(parsed.team);
+        setOrphanClientsCount(parsed.orphanClientsCount);
+      })
+      .catch((err) => console.error(err))
+      .finally(() => setLoadingTeam(false));
+  }, [isAdmin]);
+
+  useEffect(() => {
+    loadTeam();
+  }, [loadTeam]);
+
+  const claimOrphans = async () => {
+    if (claiming) return;
+    setClaiming(true);
+    try {
+      const res = await fetch('/api/tenant/wallet/claim-orphans', { method: 'POST' });
+      if (res.ok) {
+        loadTeam();
+        onOrphansClaimed?.();
+      }
+    } finally {
+      setClaiming(false);
+    }
+  };
   const allCases = clients.flatMap((c) => c.cases.map((caseItem) => ({ client: c, caseItem })));
   const countClientsWithStatus = (status: string) =>
     clients.filter((c) => c.cases.some((x) => x.status === status)).length;
@@ -86,6 +137,19 @@ export function DashboardView({ clients }: Props) {
 
   return (
     <div className="space-y-5 animate-in fade-in duration-200">
+      {/* Seção Minha Carteira */}
+      <div className="flex items-center justify-between gap-2 pt-1 pb-1">
+        <div className="flex items-center gap-2">
+          <Briefcase className="w-4 h-4 text-[var(--accent-teal)]" />
+          <h2 className="font-display text-base sm:text-lg font-bold m-0 text-[var(--ink)]">
+            Minha Carteira
+          </h2>
+        </div>
+        <span className="text-xs font-mono text-[var(--ink-soft)]">
+          Métricas e produção individual
+        </span>
+      </div>
+
       {/* 4 Hero Financial KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {money.map((m) => {
@@ -186,6 +250,134 @@ export function DashboardView({ clients }: Props) {
           })}
         </div>
       </div>
+
+      {isAdmin && orphanClientsCount > 0 && (
+        <div className="rounded-2xl border border-[var(--danger)] bg-[var(--danger-bg)] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="m-0 font-semibold text-sm text-[var(--danger)]">
+              {orphanClientsCount} cadastro{orphanClientsCount === 1 ? '' : 's'} sem responsável
+            </p>
+            <p className="m-0 mt-1 text-xs text-[var(--ink-soft)]">
+              Ficaram sem dono (ex.: vendedor removido). Ao assumir, entram na sua carteira — nomes e CPF não aparecem aqui.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn shrink-0"
+            onClick={claimOrphans}
+            disabled={claiming}
+          >
+            {claiming ? 'Assumindo…' : 'Assumir na minha carteira'}
+          </button>
+        </div>
+      )}
+
+      {/* Seção Mesa Operacional (Agregados da Equipe - Admin Only) */}
+      {isAdmin && (
+        <div className="bg-[var(--card-glass)] backdrop-blur-md border border-[var(--line-strong)] rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
+          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)] flex-wrap gap-2">
+            <div>
+              <div className="flex items-center gap-2">
+                <Users className="w-4 h-4 text-[var(--c-primeiro)]" />
+                <h3 className="font-display text-base sm:text-lg font-bold m-0 text-[var(--ink)]">
+                  Mesa Operacional (Números da Equipe)
+                </h3>
+              </div>
+              <p className="text-xs text-[var(--ink-soft)] m-0 mt-0.5">
+                Agregados numéricos consolidados por vendedor · LGPD Compliant (sem dados pessoais de clientes)
+              </p>
+            </div>
+            <span className="font-mono text-xs font-semibold px-2.5 py-1 rounded-full bg-[var(--paper)] border border-[var(--line-strong)] text-[var(--ink-soft)]">
+              {teamStats.length} vendedor{teamStats.length === 1 ? '' : 'es'}
+            </span>
+          </div>
+
+          {loadingTeam ? (
+            <p className="font-mono text-xs text-[var(--ink-soft)] py-4 text-center">
+              Carregando agregados da mesa...
+            </p>
+          ) : teamStats.length === 0 ? (
+            <p className="font-mono text-xs text-[var(--ink-muted)] py-4 text-center">
+              Nenhum dado agregado disponível.
+            </p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="border-b border-[var(--line)] text-[var(--ink-soft)] font-mono uppercase text-[10px] tracking-wider">
+                    <th className="py-2.5 px-3">Vendedor</th>
+                    <th className="py-2.5 px-3 text-right">Clientes</th>
+                    <th className="py-2.5 px-3 text-right">Casos</th>
+                    <th className="py-2.5 px-3 text-right">Vol. Seguros</th>
+                    <th className="py-2.5 px-3 text-right">Recebido Cliente</th>
+                    <th className="py-2.5 px-3 text-right">Comissão Empresa</th>
+                    <th className="py-2.5 px-3 text-right">Comissão Vendedor</th>
+                    <th className="py-2.5 px-3 text-right">Não Contatar</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--line)]">
+                  {teamStats.map((s) => (
+                    <tr key={s.userId} className="hover:bg-[var(--paper-elevated)] transition-colors">
+                      <td className="py-2.5 px-3 font-semibold text-[var(--ink)]">
+                        {s.name}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                        {s.clientsCount}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                        {s.casesCount}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                        {fmtMoney(s.insuranceValue) || 'R$ 0,00'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--accent-lime)] font-semibold">
+                        {fmtMoney(s.receivedClientAmount) || 'R$ 0,00'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--c-semresp)]">
+                        {fmtMoney(s.companyAmount) || 'R$ 0,00'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--accent-teal)] font-semibold">
+                        {fmtMoney(s.myCommission) || 'R$ 0,00'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--danger)]">
+                        {s.doNotContactCount}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-[var(--line-strong)] font-bold bg-[var(--paper-elevated)]">
+                    <td className="py-2.5 px-3 text-[var(--ink)] font-mono uppercase text-[10.5px]">
+                      Total da Mesa
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                      {teamStats.reduce((a, b) => a + b.clientsCount, 0)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                      {teamStats.reduce((a, b) => a + b.casesCount, 0)}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--ink)]">
+                      {fmtMoney(teamStats.reduce((a, b) => a + b.insuranceValue, 0)) || 'R$ 0,00'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--accent-lime)]">
+                      {fmtMoney(teamStats.reduce((a, b) => a + b.receivedClientAmount, 0)) || 'R$ 0,00'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--c-semresp)]">
+                      {fmtMoney(teamStats.reduce((a, b) => a + b.companyAmount, 0)) || 'R$ 0,00'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--accent-teal)]">
+                      {fmtMoney(teamStats.reduce((a, b) => a + b.myCommission, 0)) || 'R$ 0,00'}
+                    </td>
+                    <td className="py-2.5 px-3 text-right font-mono tabular-nums text-[var(--danger)]">
+                      {teamStats.reduce((a, b) => a + b.doNotContactCount, 0)}
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

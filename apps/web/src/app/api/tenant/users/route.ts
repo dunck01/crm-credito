@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import * as bcrypt from 'bcryptjs';
 import { parseMemberRole } from '@/lib/constants';
-import { requireTenantUser } from '@/lib/session';
+import { canManageTeam, requireTenantUser } from '@/lib/session';
+import { claimOrphanClients, reassignClients } from '@/lib/wallet';
 
 export async function GET() {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
+  if (!canManageTeam(user.role)) {
+    return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
+  }
 
   const users = await prisma.user.findMany({
     where: { tenantId: user.tenantId },
@@ -20,7 +24,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
-  if (user.role !== 'TENANT_ADMIN' && user.role !== 'SUPER_ADMIN') {
+  if (!canManageTeam(user.role)) {
     return NextResponse.json({ error: 'Apenas administradores podem cadastrar equipe.' }, { status: 403 });
   }
 
@@ -56,7 +60,7 @@ export async function POST(req: Request) {
 export async function PUT(req: Request) {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
-  if (user.role !== 'TENANT_ADMIN' && user.role !== 'SUPER_ADMIN') {
+  if (!canManageTeam(user.role)) {
     return NextResponse.json({ error: 'Apenas administradores podem editar equipe.' }, { status: 403 });
   }
 
@@ -97,7 +101,7 @@ export async function PUT(req: Request) {
 export async function DELETE(req: Request) {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
-  if (user.role !== 'TENANT_ADMIN' && user.role !== 'SUPER_ADMIN') {
+  if (!canManageTeam(user.role)) {
     return NextResponse.json({ error: 'Apenas administradores podem remover membros.' }, { status: 403 });
   }
 
@@ -107,6 +111,27 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: 'Você não pode remover a sua própria conta.' }, { status: 400 });
   }
 
-  await prisma.user.deleteMany({ where: { id: targetId, tenantId: user.tenantId } });
-  return NextResponse.json({ success: true });
+  const target = await prisma.user.findFirst({
+    where: { id: targetId, tenantId: user.tenantId },
+    select: { id: true, name: true },
+  });
+  if (!target) return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 });
+
+  try {
+    const absorbed = await prisma.$transaction(async (tx) => {
+      const fromMember = await reassignClients(tx, {
+        tenantId: user.tenantId,
+        toUserId: user.id,
+        fromUserId: target.id,
+        historyTxt: `Carteira transferida para a mesa após saída de ${target.name}.`,
+      });
+      const orphans = await claimOrphanClients(tx, user.tenantId, user.id);
+      await tx.user.delete({ where: { id: target.id } });
+      return fromMember + orphans;
+    });
+
+    return NextResponse.json({ success: true, absorbedClients: absorbed });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message || 'Erro ao remover membro.' }, { status: 500 });
+  }
 }

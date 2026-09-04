@@ -2,17 +2,75 @@ export function digitsOnly(value: unknown) {
   return String(value || '').replace(/\D/g, '');
 }
 
-export function formatCpf(value: unknown) {
-  const d = digitsOnly(value);
-  if (d.length !== 11) return String(value || '');
-  return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+export function maskCpfCnpj(value: unknown): string {
+  const d = digitsOnly(value).slice(0, 14);
+  if (!d) return '';
+  if (d.length <= 11) {
+    return d
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d)/, '$1.$2')
+      .replace(/(\d{3})(\d{1,2})$/, '$1-$2');
+  }
+  return d
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d{1,2})$/, '$1-$2');
 }
 
-export function formatPhone(value: unknown) {
-  const d = digitsOnly(value);
-  if (d.length === 11) return d.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
-  if (d.length === 10) return d.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
-  return String(value || '');
+export function formatCpf(value: unknown): string {
+  return maskCpfCnpj(value);
+}
+
+export const formatCpfCnpj = maskCpfCnpj;
+
+export function maskPhone(value: unknown): string {
+  const d = digitsOnly(value).slice(0, 11);
+  if (!d) return '';
+  if (d.length <= 2) return `(${d}`;
+  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
+  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+}
+
+export function formatPhone(value: unknown): string {
+  return maskPhone(value);
+}
+
+export function maskCep(value: unknown): string {
+  const d = digitsOnly(value).slice(0, 8);
+  if (!d) return '';
+  if (d.length <= 5) return d;
+  return `${d.slice(0, 5)}-${d.slice(5)}`;
+}
+
+export function formatCep(value: unknown): string {
+  return maskCep(value);
+}
+
+export function formatMoneyCents(centsOrFloat: number | null | undefined): string {
+  if (centsOrFloat === null || centsOrFloat === undefined || isNaN(centsOrFloat)) return '';
+  return centsOrFloat.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+export function parseCentsFromDigits(raw: unknown): { formatted: string; value: number | null } {
+  const digits = digitsOnly(raw).slice(0, 13);
+  if (!digits) {
+    return { formatted: '', value: null };
+  }
+  const cents = parseInt(digits, 10);
+  if (cents === 0) {
+    return { formatted: '0,00', value: 0 };
+  }
+  const val = cents / 100;
+  const formatted = val.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return { formatted, value: val };
 }
 
 export function whatsappLink(phone: unknown) {

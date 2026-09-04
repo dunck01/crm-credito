@@ -1,7 +1,7 @@
 'use client';
 
 import { stageByKey } from '@/lib/constants';
-import { formatCpf, formatPhone, fmtDateShort, fmtMoney, whatsappLink } from '@/lib/format';
+import { formatCpfCnpj, formatPhone, fmtDateShort, fmtMoney, whatsappLink } from '@/lib/format';
 import type { ClientRecord } from '@/lib/types';
 import { MessageCircle, FileText, Clock, AlertTriangle } from 'lucide-react';
 
@@ -39,7 +39,7 @@ export function TableView({ clients, onOpen }: Props) {
                   </div>
                   <div className="meta">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      <span>{formatCpf(c.cpf)}</span>
+                      <span>{formatCpfCnpj(c.cpf)}</span>
                       {c.phone ? <span>· {formatPhone(c.phone)}</span> : null}
                     </div>
                     <div className="flex items-center gap-2 mt-1.5 flex-wrap">
@@ -74,7 +74,7 @@ export function TableView({ clients, onOpen }: Props) {
         <table className="data-table">
           <thead>
             <tr>
-              <th>Cliente / CPF</th>
+              <th>Cliente / CPF ou CNPJ</th>
               <th>Contato</th>
               <th>Local</th>
               <th>Seguradora & Apólice</th>
@@ -111,7 +111,7 @@ export function TableView({ clients, onOpen }: Props) {
                         )}
                       </div>
                       <div className="font-mono text-xs text-[var(--ink-soft)] mt-0.5">
-                        {formatCpf(c.cpf)}
+                        {formatCpfCnpj(c.cpf)}
                       </div>
                     </td>
                     <td>

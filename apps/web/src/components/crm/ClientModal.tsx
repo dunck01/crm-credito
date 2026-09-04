@@ -8,8 +8,19 @@ import {
   DO_NOT_CONTACT_REASONS,
   stageByKey,
 } from '@/lib/constants';
-import { formatCpf, formatPhone, fmtDateShort, whatsappLink } from '@/lib/format';
-import type { ClientRecord, InsuranceCase, TenantUser } from '@/lib/types';
+import {
+  digitsOnly,
+  formatCpfCnpj,
+  formatPhone,
+  maskCpfCnpj,
+  maskPhone,
+  maskCep,
+  whatsappLink,
+} from '@/lib/format';
+import type { ClientRecord, InsuranceCase } from '@/lib/types';
+import { POLICY_FIELD_LABELS, type ParsedPolicy } from '@/lib/policy-parse';
+import { MoneyInput } from './MoneyInput';
+import { PolicyPdfImport } from './PolicyPdfImport';
 import {
   X,
   User,
@@ -22,15 +33,14 @@ import {
   Trash2,
   Download,
   AlertTriangle,
-  CheckCircle2,
+  MapPin,
+  Loader2,
 } from 'lucide-react';
 
 type Props = {
   client: ClientRecord;
   isNew: boolean;
-  users: TenantUser[];
-  isAdmin: boolean;
-  currentUserId: string;
+  currentUserName?: string;
   onClose: () => void;
   onSaved: (client: ClientRecord) => void;
 };
@@ -59,12 +69,7 @@ const emptyCase = (): Partial<InsuranceCase> => ({
   documents: [],
 });
 
-function moneyInput(value: number | null | undefined) {
-  if (value === null || value === undefined) return '';
-  return String(value);
-}
-
-export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onClose, onSaved }: Props) {
+export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }: Props) {
   const [form, setForm] = useState(client);
   const [caseForm, setCaseForm] = useState<Partial<InsuranceCase>>(
     client.cases[0] || emptyCase()
@@ -76,32 +81,185 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
   const [uploading, setUploading] = useState(false);
   const [docType, setDocType] = useState('APOLICE');
   const [cpfWarning, setCpfWarning] = useState('');
+  const [cep, setCep] = useState('');
+  const [cepLoading, setCepLoading] = useState(false);
+  const [cepFeedback, setCepFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [parsingPdf, setParsingPdf] = useState(false);
+  const [policyFilled, setPolicyFilled] = useState<Set<string>>(new Set());
+  const [pdfImport, setPdfImport] = useState<{
+    filename: string;
+    filledLabels: string[];
+    missingLabels: string[];
+    warning: string | null;
+  } | null>(null);
 
   useEffect(() => {
     setForm(client);
     setCaseForm(client.cases[0] || emptyCase());
     setSelectedCaseId(client.cases[0]?.id || '');
     setError('');
+    const existingCepMatch = client.obs?.match(/\b(\d{5}-?\d{3})\b/);
+    setCep(existingCepMatch ? maskCep(existingCepMatch[1]) : '');
+    setCepFeedback(null);
+    setPolicyFilled(new Set());
+    setPdfImport(null);
   }, [client]);
+
+  const clearPolicyMark = (key: string) => {
+    setPolicyFilled((prev) => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  };
+
+  const fromPolicy = (key: string) => policyFilled.has(key);
+  const fieldClass = (key: string) => (fromPolicy(key) ? 'field policy-filled' : 'field');
 
   const setClientField = (key: keyof ClientRecord, value: unknown) => {
     setForm((prev) => ({ ...prev, [key]: value }));
+    clearPolicyMark(String(key));
   };
 
   const setCaseField = (key: string, value: unknown) => {
     setCaseForm((prev) => ({ ...prev, [key]: value }));
+    clearPolicyMark(key);
   };
 
-  const lookupCpf = async () => {
-    const digits = String(form.cpf || '').replace(/\D/g, '');
-    if (digits.length !== 11 || !isNew) return;
+  const handleCpfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const masked = maskCpfCnpj(e.target.value);
+    setClientField('cpf', masked);
+  };
+
+  const handlePhoneChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const masked = maskPhone(e.target.value);
+    setClientField('phone', masked);
+  };
+
+  const handleCepChange = async (val: string, fromPdf = false) => {
+    const masked = maskCep(val);
+    setCep(masked);
+    if (!fromPdf) clearPolicyMark('cep');
+    const clean = digitsOnly(masked);
+    if (clean.length === 8) {
+      setCepLoading(true);
+      setCepFeedback(null);
+      try {
+        let res = await fetch(`https://viacep.com.br/ws/${clean}/json/`);
+        let data = res.ok ? await res.json() : null;
+        if (!data || data.erro) {
+          const bRes = await fetch(`https://brasilapi.com.br/api/cep/v1/${clean}`);
+          if (bRes.ok) {
+            const bData = await bRes.json();
+            data = {
+              localidade: bData.city,
+              uf: bData.state,
+              logradouro: bData.street,
+              bairro: bData.neighborhood,
+            };
+          }
+        }
+
+        if (data && !data.erro && data.localidade) {
+          setForm((prev) => {
+            const updated = {
+              ...prev,
+              city: data.localidade,
+              uf: (data.uf || '').toUpperCase(),
+            };
+            const addressLine = [data.logradouro, data.bairro].filter(Boolean).join(', ');
+            if (addressLine) {
+              if (!prev.obs) {
+                updated.obs = `Endereço: ${addressLine} - CEP ${masked}`;
+              } else if (!prev.obs.includes(masked)) {
+                updated.obs = `${prev.obs.trim()}\nEndereço: ${addressLine} - CEP ${masked}`;
+              }
+            }
+            return updated;
+          });
+
+          const full = [data.logradouro, data.bairro, `${data.localidade}/${data.uf}`]
+            .filter(Boolean)
+            .join(' · ');
+          setCepFeedback({ message: full, type: 'success' });
+        } else {
+          setCepFeedback({ message: 'CEP não localizado na base postal.', type: 'error' });
+        }
+      } catch {
+        setCepFeedback({ message: 'Erro ao consultar CEP automaticamente.', type: 'error' });
+      } finally {
+        setCepLoading(false);
+      }
+    } else {
+      setCepFeedback(null);
+    }
+  };
+
+  const lookupCpf = async (cpfValue = form.cpf) => {
+    const digits = digitsOnly(cpfValue);
+    if ((digits.length !== 11 && digits.length !== 14) || !isNew) return;
     const res = await fetch(`/api/clients?cpf=${digits}`);
     if (!res.ok) return;
     const list = await res.json();
     if (Array.isArray(list) && list[0]) {
-      setCpfWarning(`CPF já cadastrado: ${list[0].name}. O cadastro vai abrir essa ficha.`);
+      setCpfWarning(`CPF/CNPJ já cadastrado na sua carteira: ${list[0].name}. O cadastro vai abrir essa ficha.`);
     } else {
       setCpfWarning('');
+    }
+  };
+
+  const importPolicyPdf = async (file: File) => {
+    setParsingPdf(true);
+    setError('');
+    setPdfImport(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await fetch('/api/clients/parse-policy', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || 'Não foi possível ler o PDF.');
+        return;
+      }
+
+      const fields = (data.fields || {}) as ParsedPolicy;
+      const filled = (data.filled || []) as (keyof ParsedPolicy)[];
+      setPolicyFilled(new Set(filled));
+      setForm((prev) => ({
+        ...prev,
+        name: fields.name || prev.name,
+        cpf: fields.cpf ? maskCpfCnpj(fields.cpf) : prev.cpf,
+        phone: fields.phone ? maskPhone(fields.phone) : prev.phone,
+        email: fields.email || prev.email,
+        city: fields.city || prev.city,
+        uf: fields.uf || prev.uf,
+      }));
+      setCaseForm((prev) => ({
+        ...prev,
+        policyNumber: fields.policyNumber || prev.policyNumber,
+        insurer: fields.insurer || prev.insurer,
+        insuranceType: fields.insuranceType || prev.insuranceType,
+        insuranceValue: fields.insuranceValue ?? prev.insuranceValue,
+        identifiedAt: fields.identifiedAt || prev.identifiedAt,
+      }));
+
+      const important: (keyof ParsedPolicy)[] = ['name', 'cpf', 'policyNumber', 'phone'];
+      setPdfImport({
+        filename: data.filename || file.name,
+        filledLabels: filled.map((key) => POLICY_FIELD_LABELS[key]).filter(Boolean),
+        missingLabels: important
+          .filter((key) => !filled.includes(key))
+          .map((key) => POLICY_FIELD_LABELS[key]),
+        warning: data.warning || null,
+      });
+
+      if (fields.cep) await handleCepChange(fields.cep, true);
+      if (fields.cpf) await lookupCpf(fields.cpf);
+    } catch {
+      setError('Erro ao enviar o PDF.');
+    } finally {
+      setParsingPdf(false);
     }
   };
 
@@ -122,7 +280,6 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
         lastContactDate: form.lastContactDate,
         taskDate: form.taskDate,
         taskTime: form.taskTime,
-        assignedUserId: form.assignedUserId || currentUserId,
         case: isNew ? caseForm : undefined,
       };
 
@@ -137,7 +294,7 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
         const data = await res.json();
         if (res.status === 409 && data.client) {
           saved = data.client;
-          setError('CPF já existia. Ficha carregada para incluir um novo caso.');
+          setError('Este CPF já está na sua carteira. Ficha carregada para incluir um novo caso.');
           onSaved(saved);
           setSaving(false);
           return;
@@ -298,7 +455,7 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
             </div>
             {!isNew && (
               <div className="flex items-center gap-2 mt-1 text-xs font-mono text-[var(--ink-soft)] truncate">
-                <span>CPF {formatCpf(form.cpf) || 'Não informado'}</span>
+                <span>CPF/CNPJ {formatCpfCnpj(form.cpf) || 'Não informado'}</span>
                 {form.phone && <span>· {formatPhone(form.phone)}</span>}
               </div>
             )}
@@ -342,6 +499,15 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
             </div>
           )}
 
+          <PolicyPdfImport
+            parsing={parsingPdf}
+            filename={pdfImport?.filename || null}
+            filledLabels={pdfImport?.filledLabels || []}
+            missingLabels={pdfImport?.missingLabels || []}
+            warning={pdfImport?.warning || null}
+            onPick={importPolicyPdf}
+          />
+
           {/* HIERARQUIA 1: IDENTIDADE DO CLIENTE */}
           <div className="mb-4 sm:mb-5 p-3 sm:p-4 rounded-xl bg-[var(--paper)] border border-[var(--line)]">
             <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[var(--line)]">
@@ -352,63 +518,128 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
             </div>
 
             <div className="row2">
-              <div className="field">
-                <label>Nome Completo</label>
+              <div className={fieldClass('name')}>
+                <label>
+                  Nome Completo
+                  {fromPolicy('name') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input value={form.name} onChange={(e) => setClientField('name', e.target.value)} placeholder="Ex: João da Silva" />
               </div>
-              <div className="field">
-                <label>CPF Único</label>
+              <div className={fieldClass('cpf')}>
+                <label>
+                  CPF / CNPJ
+                  {fromPolicy('cpf') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input
                   value={form.cpf}
-                  onChange={(e) => setClientField('cpf', e.target.value)}
+                  onChange={handleCpfChange}
                   onBlur={lookupCpf}
-                  placeholder="000.000.000-00"
+                  placeholder="000.000.000-00 ou 00.000.000/0000-00"
                   className="font-mono"
+                  maxLength={18}
                 />
               </div>
             </div>
 
             <div className="row3">
-              <div className="field">
-                <label>Telefone / Celular</label>
-                <input value={form.phone} onChange={(e) => setClientField('phone', e.target.value)} placeholder="(00) 00000-0000" className="font-mono" />
+              <div className={fieldClass('phone')}>
+                <label>
+                  Telefone / Celular
+                  {fromPolicy('phone') && <span className="policy-tag">apólice</span>}
+                </label>
+                <input
+                  value={form.phone}
+                  onChange={handlePhoneChange}
+                  placeholder="(00) 00000-0000"
+                  className="font-mono"
+                  maxLength={15}
+                />
               </div>
-              <div className="field">
-                <label>E-mail</label>
+              <div className={fieldClass('email')}>
+                <label>
+                  E-mail
+                  {fromPolicy('email') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input value={form.email} onChange={(e) => setClientField('email', e.target.value)} placeholder="cliente@email.com" />
               </div>
               <div className="field">
                 <label>Operador Responsável</label>
-                <select
-                  value={form.assignedUserId || currentUserId}
-                  onChange={(e) => setClientField('assignedUserId', e.target.value)}
-                  disabled={!isAdmin}
-                >
-                  {users.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.name}
-                    </option>
-                  ))}
-                </select>
+                <input
+                  type="text"
+                  value={isNew ? (currentUserName || 'Você') : (form.assignedUser?.name || currentUserName || 'Você')}
+                  disabled
+                  readOnly
+                  className="opacity-80 cursor-not-allowed"
+                />
               </div>
             </div>
 
             <div className="row3">
-              <div className="field">
-                <label>Cidade</label>
-                <input value={form.city} onChange={(e) => setClientField('city', e.target.value)} />
+              <div className={fieldClass('cep')}>
+                <label className="flex items-center justify-between">
+                  <span>
+                    CEP
+                    {fromPolicy('cep') && <span className="policy-tag">apólice</span>}
+                  </span>
+                  {cepLoading && (
+                    <span className="text-[10px] font-mono text-[var(--accent-teal)] flex items-center gap-1 animate-pulse">
+                      <Loader2 className="w-2.5 h-2.5 animate-spin" /> Buscando...
+                    </span>
+                  )}
+                </label>
+                <input
+                  value={cep}
+                  onChange={(e) => handleCepChange(e.target.value)}
+                  placeholder="00000-000"
+                  className="font-mono"
+                  maxLength={9}
+                />
               </div>
-              <div className="field">
-                <label>UF</label>
-                <input value={form.uf} maxLength={2} onChange={(e) => setClientField('uf', e.target.value.toUpperCase())} placeholder="SP" className="font-mono uppercase" />
+              <div className={fieldClass('city')}>
+                <label>
+                  Cidade
+                  {fromPolicy('city') && <span className="policy-tag">apólice</span>}
+                </label>
+                <input
+                  value={form.city}
+                  onChange={(e) => setClientField('city', e.target.value)}
+                  placeholder="Ex: São Paulo"
+                />
               </div>
+              <div className={fieldClass('uf')}>
+                <label>
+                  UF
+                  {fromPolicy('uf') && <span className="policy-tag">apólice</span>}
+                </label>
+                <input
+                  value={form.uf}
+                  maxLength={2}
+                  onChange={(e) => setClientField('uf', e.target.value.toUpperCase())}
+                  placeholder="SP"
+                  className="font-mono uppercase"
+                />
+              </div>
+            </div>
+
+            {cepFeedback && (
+              <div
+                className="-mt-2 mb-3 px-3 py-1.5 rounded-lg text-xs font-mono flex items-center gap-1.5 border"
+                style={{
+                  backgroundColor: cepFeedback.type === 'success' ? 'var(--c-followup-bg)' : 'var(--danger-bg)',
+                  color: cepFeedback.type === 'success' ? 'var(--c-followup)' : 'var(--danger)',
+                  borderColor: cepFeedback.type === 'success' ? 'var(--c-followup)' : 'var(--danger)',
+                }}
+              >
+                <MapPin className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{cepFeedback.message}</span>
+              </div>
+            )}
+
+            <div className="row3">
               <div className="field">
                 <label>Último Contato Realizado</label>
                 <input type="date" value={form.lastContactDate || ''} onChange={(e) => setClientField('lastContactDate', e.target.value)} />
               </div>
-            </div>
-
-            <div className="row3">
               <div className="field">
                 <label>Agendamento de Retorno</label>
                 <input type="date" value={form.taskDate || ''} onChange={(e) => setClientField('taskDate', e.target.value)} />
@@ -417,6 +648,7 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
                 <label>Horário</label>
                 <input type="time" value={form.taskTime || ''} onChange={(e) => setClientField('taskTime', e.target.value)} />
               </div>
+            </div>
               <div className="field">
                 <label>Trava de Contato</label>
                 <select
@@ -438,7 +670,6 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
                   ))}
                 </select>
               </div>
-            </div>
 
             <div className="field mb-0">
               <label>Observações do Titular</label>
@@ -483,23 +714,35 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
             )}
 
             <div className="row2">
-              <div className="field">
-                <label>Seguradora</label>
+              <div className={fieldClass('insurer')}>
+                <label>
+                  Seguradora
+                  {fromPolicy('insurer') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input value={caseForm.insurer || ''} onChange={(e) => setCaseField('insurer', e.target.value)} placeholder="Ex: Porto Seguro, Bradesco..." />
               </div>
-              <div className="field">
-                <label>Número da Apólice / Código de Crédito</label>
+              <div className={fieldClass('policyNumber')}>
+                <label>
+                  Número da Apólice / Código de Crédito
+                  {fromPolicy('policyNumber') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input value={caseForm.policyNumber || ''} onChange={(e) => setCaseField('policyNumber', e.target.value)} placeholder="Ex: APL-9999" className="font-mono" />
               </div>
             </div>
 
             <div className="row3">
-              <div className="field">
-                <label>Tipo do Seguro</label>
+              <div className={fieldClass('insuranceType')}>
+                <label>
+                  Tipo do Seguro
+                  {fromPolicy('insuranceType') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input value={caseForm.insuranceType || ''} onChange={(e) => setCaseField('insuranceType', e.target.value)} placeholder="Ex: Prestamista, Vida..." />
               </div>
-              <div className="field">
-                <label>Identificado em</label>
+              <div className={fieldClass('identifiedAt')}>
+                <label>
+                  Identificado em
+                  {fromPolicy('identifiedAt') && <span className="policy-tag">apólice</span>}
+                </label>
                 <input type="date" value={caseForm.identifiedAt || ''} onChange={(e) => setCaseField('identifiedAt', e.target.value)} />
               </div>
               <div className="field">
@@ -543,31 +786,30 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
 
             {/* Grid de Valores com destaque fintech */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-              <div className="field mb-0">
-                <label className="text-[var(--accent-lime)] font-bold">Valor do Seguro (Base R$)</label>
-                <input
-                  value={moneyInput(caseForm.insuranceValue)}
-                  onChange={(e) => setCaseField('insuranceValue', e.target.value)}
-                  placeholder="0,00"
-                  className="font-mono font-bold text-[var(--accent-lime)] tabular-nums"
+              <div className={`${fieldClass('insuranceValue')} mb-0`}>
+                <label className="text-[var(--accent-lime)] font-bold">
+                  Valor do Seguro (Base R$)
+                  {fromPolicy('insuranceValue') && <span className="policy-tag">apólice</span>}
+                </label>
+                <MoneyInput
+                  value={caseForm.insuranceValue}
+                  onChange={(val) => setCaseField('insuranceValue', val)}
+                  accentColor="var(--accent-lime)"
+                  className="font-bold text-[var(--accent-lime)]"
                 />
               </div>
               <div className="field mb-0">
                 <label>Valor Previsto ao Cliente</label>
-                <input
-                  value={moneyInput(caseForm.expectedClientAmount)}
-                  onChange={(e) => setCaseField('expectedClientAmount', e.target.value)}
-                  placeholder="0,00"
-                  className="font-mono tabular-nums"
+                <MoneyInput
+                  value={caseForm.expectedClientAmount}
+                  onChange={(val) => setCaseField('expectedClientAmount', val)}
                 />
               </div>
               <div className="field mb-0">
                 <label>Valor Recebido pelo Cliente</label>
-                <input
-                  value={moneyInput(caseForm.receivedClientAmount)}
-                  onChange={(e) => setCaseField('receivedClientAmount', e.target.value)}
-                  placeholder="0,00"
-                  className="font-mono tabular-nums"
+                <MoneyInput
+                  value={caseForm.receivedClientAmount}
+                  onChange={(val) => setCaseField('receivedClientAmount', val)}
                 />
               </div>
             </div>
@@ -579,18 +821,29 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
               </div>
               <div className="field">
                 <label>Comissão da Empresa (R$)</label>
-                <input value={moneyInput(caseForm.companyAmount)} onChange={(e) => setCaseField('companyAmount', e.target.value)} placeholder="0,00" className="font-mono tabular-nums" />
+                <MoneyInput
+                  value={caseForm.companyAmount}
+                  onChange={(val) => setCaseField('companyAmount', val)}
+                />
               </div>
               <div className="field">
                 <label>Pago à Empresa (R$)</label>
-                <input value={moneyInput(caseForm.companyPaidAmount)} onChange={(e) => setCaseField('companyPaidAmount', e.target.value)} placeholder="0,00" className="font-mono tabular-nums" />
+                <MoneyInput
+                  value={caseForm.companyPaidAmount}
+                  onChange={(val) => setCaseField('companyPaidAmount', val)}
+                />
               </div>
             </div>
 
             <div className="row3">
               <div className="field">
                 <label className="text-[var(--accent-teal)] font-bold">Minha Comissão (R$)</label>
-                <input value={moneyInput(caseForm.myCommission)} onChange={(e) => setCaseField('myCommission', e.target.value)} placeholder="0,00" className="font-mono font-bold text-[var(--accent-teal)] tabular-nums" />
+                <MoneyInput
+                  value={caseForm.myCommission}
+                  onChange={(val) => setCaseField('myCommission', val)}
+                  accentColor="var(--accent-teal)"
+                  className="font-bold text-[var(--accent-teal)]"
+                />
               </div>
               <div className="field">
                 <label>Vencimento Empresa</label>
@@ -741,7 +994,7 @@ export function ClientModal({ client, isNew, users, isAdmin, currentUserId, onCl
           <div className="modal-cpf-meta">
             {!isNew && (
               <span className="text-xs text-[var(--ink-soft)] font-mono">
-                Cadastro vinculado ao CPF {formatCpf(form.cpf)}
+                Cadastro vinculado ao documento {formatCpfCnpj(form.cpf)}
               </span>
             )}
           </div>

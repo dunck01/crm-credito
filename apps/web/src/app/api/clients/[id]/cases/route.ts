@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import { serializeCase } from '@/lib/api-serialize';
-import { canSeeAllClients, requireTenantUser } from '@/lib/session';
+import { ownsClient, requireTenantUser } from '@/lib/session';
 import { parseMoney } from '@/lib/format';
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
@@ -11,9 +11,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const client = await prisma.client.findFirst({
     where: { id: params.id, tenantId: user.tenantId },
   });
-  if (!client) return NextResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
-  if (!canSeeAllClients(user.role) && client.assignedUserId !== user.id) {
-    return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
+  if (!client || !ownsClient(user, client)) {
+    return NextResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
   }
 
   try {

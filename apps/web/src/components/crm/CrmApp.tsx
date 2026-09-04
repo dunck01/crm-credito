@@ -54,7 +54,6 @@ export function CrmApp() {
   const [dark, setDark] = useState(true);
   const [view, setView] = useState<ViewMode>('kanban');
   const [search, setSearch] = useState('');
-  const [assignedFilter, setAssignedFilter] = useState('me');
   const [taskFilter, setTaskFilter] = useState('');
   const [listFilter, setListFilter] = useState('');
   const [insurerFilter, setInsurerFilter] = useState('');
@@ -66,24 +65,23 @@ export function CrmApp() {
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
 
-  const currentUserId = useMemo(() => {
-    if (user?.id && users.some((u) => u.id === user.id)) return user.id;
-    const email = String(user?.email || '').toLowerCase();
-    const match = users.find((u) => u.email.toLowerCase() === email);
-    return match?.id || user?.id || '';
-  }, [user?.id, user?.email, users]);
+  const currentUserId = user?.id || '';
 
   const fetchAll = useCallback(async () => {
     try {
-      const [cRes, uRes] = await Promise.all([fetch('/api/clients?archived=false'), fetch('/api/tenant/users')]);
+      const promises: Promise<Response>[] = [fetch('/api/clients?archived=false')];
+      if (isAdmin) {
+        promises.push(fetch('/api/tenant/users'));
+      }
+      const [cRes, uRes] = await Promise.all(promises);
       if (cRes.ok) setClients(await cRes.json());
-      if (uRes.ok) setUsers(await uRes.json());
+      if (uRes && uRes.ok) setUsers(await uRes.json());
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     fetchAll();
@@ -130,8 +128,6 @@ export function CrmApp() {
     const today = todayStr();
 
     return clients.filter((c) => {
-      if (assignedFilter === 'me' && c.assignedUserId !== currentUserId) return false;
-      if (assignedFilter && assignedFilter !== 'me' && c.assignedUserId !== assignedFilter) return false;
       if (listFilter === 'nao-contatar' && !c.doNotContact) return false;
       if (listFilter === 'retorno' && (!c.taskDate || c.taskDate > today)) return false;
       if (taskFilter === 'today' && c.taskDate !== today) return false;
@@ -147,7 +143,7 @@ export function CrmApp() {
       const digits = digitsOnly(`${c.cpf}${c.phone}${c.cases.map((x) => x.policyNumber).join('')}`);
       return blob.includes(q) || (qDigits && digits.includes(qDigits));
     });
-  }, [clients, search, assignedFilter, listFilter, taskFilter, insurerFilter, statusFilter, currentUserId]);
+  }, [clients, search, listFilter, taskFilter, insurerFilter, statusFilter]);
 
   const cardsByStatus = useMemo(() => {
     const map: Record<string, CaseCard[]> = {};
@@ -283,7 +279,7 @@ export function CrmApp() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por cliente, CPF, telefone, apólice ou seguradora..."
+            placeholder="Buscar por cliente, CPF/CNPJ, telefone, apólice ou seguradora..."
           />
           {search && (
             <button
@@ -301,17 +297,6 @@ export function CrmApp() {
       </div>
 
       <div className="filters-bar">
-        {isAdmin && (
-          <select value={assignedFilter} onChange={(e) => setAssignedFilter(e.target.value)}>
-            <option value="">Todos os responsáveis</option>
-            <option value="me">Minha carteira</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.name}
-              </option>
-            ))}
-          </select>
-        )}
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
           <option value="">Todos os status</option>
           {CASE_STAGES.map((s) => (
@@ -368,6 +353,8 @@ export function CrmApp() {
               return true;
             }),
           }))}
+          isAdmin={isAdmin}
+          onOrphansClaimed={fetchAll}
         />
       )}
 
@@ -375,9 +362,7 @@ export function CrmApp() {
         <ClientModal
           client={selected}
           isNew={isNew}
-          users={users}
-          isAdmin={isAdmin}
-          currentUserId={currentUserId}
+          currentUserName={user?.name || ''}
           onClose={() => setModalOpen(false)}
           onSaved={(saved) => {
             setIsNew(false);

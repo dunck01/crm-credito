@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import { clientInclude, serializeClient } from '@/lib/api-serialize';
 import { digitsOnly, parseMoney } from '@/lib/format';
-import { canSeeAllClients, requireTenantUser } from '@/lib/session';
+import { requireTenantUser } from '@/lib/session';
 
 export async function GET(req: Request) {
   const user = await requireTenantUser();
@@ -14,12 +14,9 @@ export async function GET(req: Request) {
 
   const where: Record<string, unknown> = {
     tenantId: user.tenantId,
+    assignedUserId: user.id,
     isArchived: archived,
   };
-
-  if (!canSeeAllClients(user.role)) {
-    where.assignedUserId = user.id;
-  }
 
   if (cpfParam) {
     where.cpf = cpfParam;
@@ -45,7 +42,9 @@ export async function POST(req: Request) {
     const cpf = digitsOnly(body.cpf);
 
     if (!name) return NextResponse.json({ error: 'Nome é obrigatório.' }, { status: 400 });
-    if (cpf.length !== 11) return NextResponse.json({ error: 'CPF inválido. Informe 11 dígitos.' }, { status: 400 });
+    if (cpf.length !== 11 && cpf.length !== 14) {
+      return NextResponse.json({ error: 'CPF/CNPJ inválido. Informe 11 dígitos (CPF) ou 14 dígitos (CNPJ).' }, { status: 400 });
+    }
 
     const existing = await prisma.client.findFirst({
       where: { tenantId: user.tenantId, cpf },
@@ -53,20 +52,22 @@ export async function POST(req: Request) {
     });
 
     if (existing) {
+      if (existing.assignedUserId === user.id) {
+        return NextResponse.json(
+          { error: 'Este CPF já está cadastrado na sua carteira.', client: serializeClient(existing) },
+          { status: 409 }
+        );
+      }
       return NextResponse.json(
-        { error: 'Já existe um cliente com este CPF.', client: serializeClient(existing) },
+        { error: 'Este CPF já está cadastrado nesta mesa.' },
         { status: 409 }
       );
     }
 
-    const assignedUserId = canSeeAllClients(user.role)
-      ? body.assignedUserId || user.id
-      : user.id;
-
     const created = await prisma.client.create({
       data: {
         tenantId: user.tenantId,
-        assignedUserId: assignedUserId || user.id,
+        assignedUserId: user.id,
         name,
         cpf,
         phone: digitsOnly(body.phone) || null,

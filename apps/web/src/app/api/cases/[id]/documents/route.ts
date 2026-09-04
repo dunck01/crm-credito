@@ -1,16 +1,15 @@
 import { NextResponse } from 'next/server';
 import { prisma, DocumentType } from '@crm-credito/database';
 import { MAX_UPLOAD_BYTES } from '@/lib/constants';
-import { canSeeAllClients, requireTenantUser } from '@/lib/session';
+import { ownsClient, requireTenantUser } from '@/lib/session';
 
-async function getOwnedCase(caseId: string, tenantId: string, userId: string, role: string) {
+async function getOwnedCase(caseId: string, tenantId: string, userId: string) {
   const item = await prisma.insuranceCase.findFirst({
     where: { id: caseId, tenantId },
     include: { client: true },
   });
-  if (!item) return { error: 'Caso não encontrado.', status: 404 as const };
-  if (!canSeeAllClients(role) && item.client.assignedUserId !== userId) {
-    return { error: 'Acesso negado.', status: 403 as const };
+  if (!item || !ownsClient({ id: userId }, item.client)) {
+    return { error: 'Caso não encontrado.', status: 404 as const };
   }
   return { item };
 }
@@ -19,7 +18,7 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
 
-  const owned = await getOwnedCase(params.id, user.tenantId, user.id, user.role);
+  const owned = await getOwnedCase(params.id, user.tenantId, user.id);
   if ('error' in owned && owned.error) {
     return NextResponse.json({ error: owned.error }, { status: owned.status });
   }
@@ -37,7 +36,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
 
-  const owned = await getOwnedCase(params.id, user.tenantId, user.id, user.role);
+  const owned = await getOwnedCase(params.id, user.tenantId, user.id);
   if ('error' in owned && owned.error) {
     return NextResponse.json({ error: owned.error }, { status: owned.status });
   }
