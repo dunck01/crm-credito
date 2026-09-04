@@ -102,14 +102,20 @@ export function MoneyInput({
     }
   };
 
+  const isLime = accentColor?.includes('lime');
+  const isTeal = accentColor?.includes('teal');
+  const colorClass = isLime ? 'text-lime' : isTeal ? 'text-teal' : '';
+
   return (
-    <div className="relative flex items-center w-full">
-      <span
-        className="absolute left-3 font-mono font-bold text-xs pointer-events-none select-none z-10 transition-colors"
-        style={{ color: accentColor || 'var(--ink-muted)' }}
-      >
-        R$
-      </span>
+    <div className="money-input-wrap relative flex items-center w-full">
+      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none select-none z-10">
+        <span
+          className="font-mono font-bold text-xs transition-colors leading-none"
+          style={{ color: accentColor || 'var(--ink-muted)' }}
+        >
+          R$
+        </span>
+      </div>
       <input
         ref={inputRef}
         id={id}
@@ -122,8 +128,11 @@ export function MoneyInput({
         onChange={handleChange}
         onPaste={handlePaste}
         placeholder={placeholder}
-        className={`w-full pl-9 font-mono tabular-nums ${className}`}
-        style={accentColor ? { color: accentColor } : undefined}
+        className={`money-field-input w-full font-mono tabular-nums ${colorClass} ${className}`}
+        style={{
+          paddingLeft: '42px',
+          ...(accentColor ? { color: accentColor } : {}),
+        }}
       />
     </div>
   );

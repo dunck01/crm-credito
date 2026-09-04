@@ -1003,6 +1003,26 @@ body.light-mode .field textarea:focus {
   resize: vertical;
   min-height: 68px;
 }
+
+/* Money Input formatting: prevents overlapping prefix and values */
+.money-input-wrap {
+  position: relative;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+.field input.money-field-input,
+input.money-field-input {
+  padding-left: 42px !important;
+}
+.field input.money-field-input.text-lime,
+input.money-field-input.text-lime {
+  color: var(--accent-lime) !important;
+}
+.field input.money-field-input.text-teal,
+input.money-field-input.text-teal {
+  color: var(--accent-teal) !important;
+}
 .field.policy-filled input,
 .field.policy-filled textarea {
   border-color: color-mix(in srgb, var(--accent-teal) 70%, var(--line-strong)) !important;
