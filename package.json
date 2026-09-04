@@ -1,0 +1,28 @@
+{
+  "name": "crm-credito-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": "20.x"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter @crm-credito/web dev",
+    "all": "pnpm --filter @crm-credito/web dev",
+    "start": "pnpm --filter @crm-credito/web start",
+    "build": "pnpm -r --if-present build",
+    "db:generate": "pnpm --filter @crm-credito/database db:generate",
+    "db:push": "pnpm --filter @crm-credito/database db:push",
+    "db:seed": "pnpm --filter @crm-credito/database db:seed"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  }
+}

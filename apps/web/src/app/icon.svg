@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#070B14"/>
+      <stop offset="100%" stop-color="#0D1527"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C8F542"/>
+      <stop offset="100%" stop-color="#2EE6A6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#bg)"/>
+  <rect width="508" height="508" x="2" y="2" rx="126" fill="none" stroke="rgba(56, 189, 248, 0.15)" stroke-width="4"/>
+  <!-- Shield perimeter -->
+  <path d="M256 88 L412 152 V272 C412 360 344 424 256 448 C168 424 100 360 100 272 V152 Z" fill="url(#shield)" stroke="rgba(56, 189, 248, 0.28)" stroke-width="8"/>
+  <!-- Restitution tick & ledger bars -->
+  <path d="M190 260 L236 306 L324 206" fill="none" stroke="url(#glow)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="180" y="348" width="152" height="14" rx="7" fill="#2EE6A6" opacity="0.85"/>
+  <rect x="216" y="374" width="80" height="10" rx="5" fill="#C8F542" opacity="0.65"/>
+</svg>
