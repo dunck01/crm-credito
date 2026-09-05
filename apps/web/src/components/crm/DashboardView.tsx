@@ -118,7 +118,7 @@ export function DashboardView({ clients, isAdmin, onOrphansClaimed }: Props) {
       label: 'Minha Comissão Apurada',
       value: commission,
       accent: 'text-[var(--accent-teal)]',
-      sub: 'Comissão individual direta',
+      sub: '50% da taxa da empresa (30% da devolução)',
       icon: DollarSign,
     },
   ];

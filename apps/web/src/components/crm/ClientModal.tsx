@@ -12,11 +12,13 @@ import {
   digitsOnly,
   formatCpfCnpj,
   formatPhone,
+  fmtMoney,
   maskCpfCnpj,
   maskPhone,
   maskCep,
   whatsappLink,
 } from '@/lib/format';
+import { devolutionBase, splitCommission } from '@/lib/commission';
 import type { ClientRecord, InsuranceCase } from '@/lib/types';
 import { POLICY_FIELD_LABELS, type ParsedPolicy } from '@/lib/policy-parse';
 import { MoneyInput } from './MoneyInput';
@@ -123,7 +125,20 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
   };
 
   const setCaseField = (key: string, value: unknown) => {
-    setCaseForm((prev) => ({ ...prev, [key]: value }));
+    setCaseForm((prev) => {
+      const next = { ...prev, [key]: value };
+      if (key === 'expectedClientAmount' || key === 'receivedClientAmount') {
+        const split = splitCommission(
+          devolutionBase({
+            receivedClientAmount: next.receivedClientAmount,
+            expectedClientAmount: next.expectedClientAmount,
+          })
+        );
+        next.companyAmount = split.companyAmount;
+        next.myCommission = split.myCommission;
+      }
+      return next;
+    });
     clearPolicyMark(key);
   };
 
@@ -799,14 +814,14 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
                 />
               </div>
               <div className="field mb-0">
-                <label>Valor Previsto ao Cliente</label>
+                <label>Devolução prevista ao cliente</label>
                 <MoneyInput
                   value={caseForm.expectedClientAmount}
                   onChange={(val) => setCaseField('expectedClientAmount', val)}
                 />
               </div>
               <div className="field mb-0">
-                <label>Valor Recebido pelo Cliente</label>
+                <label>Devolução recebida pelo cliente</label>
                 <MoneyInput
                   value={caseForm.receivedClientAmount}
                   onChange={(val) => setCaseField('receivedClientAmount', val)}
@@ -814,13 +829,29 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
               </div>
             </div>
 
+            {(() => {
+              const base = devolutionBase({
+                receivedClientAmount: caseForm.receivedClientAmount,
+                expectedClientAmount: caseForm.expectedClientAmount,
+              });
+              if (!base) return null;
+              const usingReceived = Boolean(caseForm.receivedClientAmount && caseForm.receivedClientAmount > 0);
+              return (
+                <p className="m-0 mb-3 text-[11px] font-mono text-[var(--ink-soft)] leading-relaxed">
+                  Comissão automática sobre a {usingReceived ? 'devolução recebida' : 'devolução prevista'}{' '}
+                  ({fmtMoney(base)}): empresa 30% = {fmtMoney(caseForm.companyAmount)} · sua parte 50% dessa
+                  taxa = {fmtMoney(caseForm.myCommission)}.
+                </p>
+              );
+            })()}
+
             <div className="row3">
               <div className="field">
                 <label>Data Recebimento Cliente</label>
                 <input type="date" value={caseForm.clientReceivedAt || ''} onChange={(e) => setCaseField('clientReceivedAt', e.target.value)} />
               </div>
               <div className="field">
-                <label>Comissão da Empresa (R$)</label>
+                <label>Taxa da empresa (30%)</label>
                 <MoneyInput
                   value={caseForm.companyAmount}
                   onChange={(val) => setCaseField('companyAmount', val)}
@@ -837,7 +868,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
 
             <div className="row3">
               <div className="field">
-                <label className="text-[var(--accent-teal)] font-bold">Minha Comissão (R$)</label>
+                <label className="text-[var(--accent-teal)] font-bold">Sua comissão (50% da taxa)</label>
                 <MoneyInput
                   value={caseForm.myCommission}
                   onChange={(val) => setCaseField('myCommission', val)}
