@@ -32,6 +32,8 @@ export type InsuranceCase = {
   insurer: string;
   insuranceType: string;
   identifiedAt: string;
+  policyStartAt: string;
+  policyEndAt: string;
   quantity: number;
   insuranceValue: number | null;
   obs: string;

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { TenantUser } from '@/lib/types';
 import { Users, X, UserPlus, Shield, User, Trash2, Edit2, AlertTriangle } from 'lucide-react';
+import { ConfirmDialog } from './ConfirmDialog';
+import { ModalOverlay } from './ModalOverlay';
 
 type Props = {
   users: TenantUser[];
@@ -16,6 +18,7 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
   const [editing, setEditing] = useState<TenantUser | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pendingRemove, setPendingRemove] = useState<TenantUser | null>(null);
 
   const reset = () => {
     setName('');
@@ -57,21 +60,13 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
   };
 
   const remove = async (id: string) => {
-    const member = users.find((u) => u.id === id);
-    const label = member?.name || 'este membro';
-    if (
-      !confirm(
-        `Remover ${label}? A carteira dele passa para você, para nenhum cliente ficar sem responsável.`
-      )
-    ) {
-      return;
-    }
     const res = await fetch(`/api/tenant/users?id=${id}`, { method: 'DELETE' });
     if (res.ok) onChanged();
   };
 
   return (
-    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <>
+    <ModalOverlay onClose={onClose}>
       <div className="modal">
         <div className="modal-grabber" />
 
@@ -186,7 +181,7 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
                   >
                     <Edit2 className="w-3 h-3" /> Editar
                   </button>
-                  <button className="btn btn-danger btn-small" type="button" onClick={() => remove(u.id)}>
+                  <button className="btn btn-danger btn-small" type="button" onClick={() => setPendingRemove(u)}>
                     <Trash2 className="w-3 h-3" /> Remover
                   </button>
                 </div>
@@ -202,6 +197,20 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
           </button>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
+      {pendingRemove && (
+        <ConfirmDialog
+          title="Remover membro?"
+          message={`Remover ${pendingRemove.name}? A carteira dele passa para você, para nenhum cliente ficar sem responsável.`}
+          confirmLabel="Remover membro"
+          onCancel={() => setPendingRemove(null)}
+          onConfirm={async () => {
+            const id = pendingRemove.id;
+            setPendingRemove(null);
+            await remove(id);
+          }}
+        />
+      )}
+    </>
   );
 }

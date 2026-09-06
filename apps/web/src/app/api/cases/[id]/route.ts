@@ -56,6 +56,8 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
         insurer: body.insurer !== undefined ? body.insurer || null : undefined,
         insuranceType: body.insuranceType !== undefined ? body.insuranceType || null : undefined,
         identifiedAt: body.identifiedAt !== undefined ? body.identifiedAt || null : undefined,
+        policyStartAt: body.policyStartAt !== undefined ? body.policyStartAt || null : undefined,
+        policyEndAt: body.policyEndAt !== undefined ? body.policyEndAt || null : undefined,
         quantity: body.quantity !== undefined ? Number(body.quantity) || 1 : undefined,
         insuranceValue: moneyOrSkip(body.insuranceValue),
         obs: body.obs !== undefined ? body.obs || null : undefined,

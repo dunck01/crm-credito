@@ -58,6 +58,9 @@ export function CrmApp() {
   const [listFilter, setListFilter] = useState('');
   const [insurerFilter, setInsurerFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [ufFilter, setUfFilter] = useState('');
+  const [cityFilter, setCityFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [teamOpen, setTeamOpen] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [isNew, setIsNew] = useState(false);
@@ -99,14 +102,11 @@ export function CrmApp() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setModalOpen(false);
-        setTeamOpen(false);
-      }
+      if (e.key === 'Escape' && !modalOpen) setTeamOpen(false);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [modalOpen]);
 
   const toggleTheme = () => {
     const next = !dark;
@@ -132,18 +132,23 @@ export function CrmApp() {
       if (listFilter === 'retorno' && (!c.taskDate || c.taskDate > today)) return false;
       if (taskFilter === 'today' && c.taskDate !== today) return false;
       if (taskFilter === 'overdue' && !(c.taskDate && c.taskDate < today)) return false;
+      if (ufFilter && (c.uf || '').toUpperCase() !== ufFilter) return false;
+      if (cityFilter && normalizeSearch(c.city) !== normalizeSearch(cityFilter)) return false;
       if (insurerFilter && !c.cases.some((x) => normalizeSearch(x.insurer).includes(normalizeSearch(insurerFilter)))) {
+        return false;
+      }
+      if (typeFilter && !c.cases.some((x) => normalizeSearch(x.insuranceType).includes(normalizeSearch(typeFilter)))) {
         return false;
       }
       if (statusFilter && !c.cases.some((x) => x.status === statusFilter)) return false;
       if (!q && !qDigits) return true;
       const blob = normalizeSearch(
-        [c.name, c.email, c.city, c.phone, c.cpf, ...c.cases.map((x) => `${x.policyNumber} ${x.insurer}`)].join(' ')
+        [c.name, c.email, c.city, c.phone, c.cpf, ...c.cases.map((x) => `${x.policyNumber} ${x.insurer} ${x.insuranceType}`)].join(' ')
       );
       const digits = digitsOnly(`${c.cpf}${c.phone}${c.cases.map((x) => x.policyNumber).join('')}`);
       return blob.includes(q) || (qDigits && digits.includes(qDigits));
     });
-  }, [clients, search, listFilter, taskFilter, insurerFilter, statusFilter]);
+  }, [clients, search, listFilter, taskFilter, insurerFilter, statusFilter, ufFilter, cityFilter, typeFilter]);
 
   const cardsByStatus = useMemo(() => {
     const map: Record<string, CaseCard[]> = {};
@@ -157,18 +162,72 @@ export function CrmApp() {
         }
         if (statusFilter && caseItem.status !== statusFilter) return;
         if (insurerFilter && !normalizeSearch(caseItem.insurer).includes(normalizeSearch(insurerFilter))) return;
+        if (typeFilter && !normalizeSearch(caseItem.insuranceType).includes(normalizeSearch(typeFilter))) return;
         if (!map[caseItem.status]) map[caseItem.status] = [];
         map[caseItem.status].push({ client, caseItem });
       });
     });
     return map;
-  }, [filteredClients, listFilter, statusFilter, insurerFilter]);
+  }, [filteredClients, listFilter, statusFilter, insurerFilter, typeFilter]);
 
   const insurers = useMemo(() => {
     const set = new Set<string>();
     clients.forEach((c) => c.cases.forEach((x) => x.insurer && set.add(x.insurer)));
     return Array.from(set).sort();
   }, [clients]);
+
+  const types = useMemo(() => {
+    const set = new Set<string>();
+    clients.forEach((c) => c.cases.forEach((x) => x.insuranceType && set.add(x.insuranceType)));
+    return Array.from(set).sort();
+  }, [clients]);
+
+  const ufs = useMemo(() => {
+    const set = new Set<string>();
+    clients.forEach((c) => c.uf && set.add(c.uf.toUpperCase()));
+    return Array.from(set).sort();
+  }, [clients]);
+
+  const cities = useMemo(() => {
+    const set = new Set<string>();
+    clients.forEach((c) => {
+      if (!c.city) return;
+      if (ufFilter && (c.uf || '').toUpperCase() !== ufFilter) return;
+      set.add(c.city);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }, [clients, ufFilter]);
+
+  const caseMatchesFilters = (x: { status: string; insurer: string; insuranceType: string }) => {
+    if (statusFilter && x.status !== statusFilter) return false;
+    if (insurerFilter && !normalizeSearch(x.insurer).includes(normalizeSearch(insurerFilter))) return false;
+    if (typeFilter && !normalizeSearch(x.insuranceType).includes(normalizeSearch(typeFilter))) return false;
+    return true;
+  };
+
+  const listClients = useMemo(
+    () =>
+      filteredClients.map((c) => ({
+        ...c,
+        cases: c.cases.filter(caseMatchesFilters),
+      })),
+    [filteredClients, statusFilter, insurerFilter, typeFilter]
+  );
+
+  const hasActiveFilters = Boolean(
+    search || listFilter || taskFilter || insurerFilter || statusFilter || ufFilter || cityFilter || typeFilter
+  );
+
+  const clearFilters = () => {
+    setSearch('');
+    setListFilter('');
+    setTaskFilter('');
+    setInsurerFilter('');
+    setStatusFilter('');
+    setUfFilter('');
+    setCityFilter('');
+    setTypeFilter('');
+  };
 
   const openNew = () => {
     setSelected(blankClient(currentUserId));
@@ -323,6 +382,41 @@ export function CrmApp() {
             </option>
           ))}
         </select>
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
+          <option value="">Todos os tipos</option>
+          {types.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={ufFilter}
+          onChange={(e) => {
+            setUfFilter(e.target.value);
+            setCityFilter('');
+          }}
+        >
+          <option value="">Todos os estados</option>
+          {ufs.map((uf) => (
+            <option key={uf} value={uf}>
+              {uf}
+            </option>
+          ))}
+        </select>
+        <select value={cityFilter} onChange={(e) => setCityFilter(e.target.value)}>
+          <option value="">Todas as cidades</option>
+          {cities.map((city) => (
+            <option key={city} value={city}>
+              {city}
+            </option>
+          ))}
+        </select>
+        {hasActiveFilters && (
+          <button className="btn btn-ghost btn-small" type="button" onClick={clearFilters}>
+            Limpar filtros
+          </button>
+        )}
       </div>
 
       {view === 'kanban' && (
@@ -341,18 +435,11 @@ export function CrmApp() {
           onAdd={openNew}
         />
       )}
-      {view === 'table' && <TableView clients={filteredClients} onOpen={openClient} />}
+      {view === 'table' && <TableView clients={listClients} onOpen={openClient} />}
       {view === 'agenda' && <AgendaView clients={filteredClients} onOpen={openClient} />}
       {view === 'dashboard' && (
         <DashboardView
-          clients={filteredClients.map((c) => ({
-            ...c,
-            cases: c.cases.filter((x) => {
-              if (statusFilter && x.status !== statusFilter) return false;
-              if (insurerFilter && !normalizeSearch(x.insurer).includes(normalizeSearch(insurerFilter))) return false;
-              return true;
-            }),
-          }))}
+          clients={listClients}
           isAdmin={isAdmin}
           onOrphansClaimed={fetchAll}
         />
@@ -367,6 +454,11 @@ export function CrmApp() {
           onSaved={(saved) => {
             setIsNew(false);
             setSelected(saved);
+            fetchAll();
+          }}
+          onDeleted={() => {
+            setModalOpen(false);
+            setSelected(null);
             fetchAll();
           }}
         />

@@ -27,6 +27,8 @@ export function serializeCase(c: any) {
     insurer: c.insurer || '',
     insuranceType: c.insuranceType || '',
     identifiedAt: c.identifiedAt || '',
+    policyStartAt: c.policyStartAt || '',
+    policyEndAt: c.policyEndAt || '',
     quantity: c.quantity ?? 1,
     insuranceValue: c.insuranceValue == null ? null : decimalNumber(c.insuranceValue),
     obs: c.obs || '',

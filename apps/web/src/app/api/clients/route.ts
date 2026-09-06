@@ -88,6 +88,8 @@ export async function POST(req: Request) {
                 insurer: body.case.insurer || null,
                 insuranceType: body.case.insuranceType || null,
                 identifiedAt: body.case.identifiedAt || null,
+                policyStartAt: body.case.policyStartAt || null,
+                policyEndAt: body.case.policyEndAt || null,
                 quantity: Number(body.case.quantity) || 1,
                 insuranceValue: parseMoney(body.case.insuranceValue),
                 obs: body.case.obs || null,

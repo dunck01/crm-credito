@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   CASE_STAGES,
   CONTRACT_STATUSES,
   DOCUMENT_TYPES,
   DO_NOT_CONTACT_REASONS,
+  INSURANCE_TYPES,
+  INSURERS,
   stageByKey,
 } from '@/lib/constants';
 import {
@@ -19,9 +21,12 @@ import {
   whatsappLink,
 } from '@/lib/format';
 import { devolutionBase, splitCommission } from '@/lib/commission';
+import { catalogInsurerTitle, catalogTypeTitle, estimateDevolution } from '@/lib/devolution';
 import type { ClientRecord, InsuranceCase } from '@/lib/types';
 import { POLICY_FIELD_LABELS, type ParsedPolicy } from '@/lib/policy-parse';
+import { ConfirmDialog } from './ConfirmDialog';
 import { MoneyInput } from './MoneyInput';
+import { ModalOverlay } from './ModalOverlay';
 import { PolicyPdfImport } from './PolicyPdfImport';
 import {
   X,
@@ -45,6 +50,7 @@ type Props = {
   currentUserName?: string;
   onClose: () => void;
   onSaved: (client: ClientRecord) => void;
+  onDeleted?: () => void;
 };
 
 const emptyCase = (): Partial<InsuranceCase> => ({
@@ -52,6 +58,8 @@ const emptyCase = (): Partial<InsuranceCase> => ({
   insurer: '',
   insuranceType: '',
   identifiedAt: '',
+  policyStartAt: '',
+  policyEndAt: '',
   quantity: 1,
   insuranceValue: null,
   obs: '',
@@ -71,7 +79,96 @@ const emptyCase = (): Partial<InsuranceCase> => ({
   documents: [],
 });
 
-export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }: Props) {
+type ConfirmState = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+  action: () => void | Promise<void>;
+};
+
+function applyDevolution(next: Partial<InsuranceCase>, manual: boolean): Partial<InsuranceCase> {
+  if (manual) {
+    const split = splitCommission(
+      devolutionBase({
+        receivedClientAmount: next.receivedClientAmount,
+        expectedClientAmount: next.expectedClientAmount,
+      })
+    );
+    return { ...next, companyAmount: split.companyAmount, myCommission: split.myCommission };
+  }
+  const estimate = estimateDevolution({
+    insurer: next.insurer,
+    insuranceType: next.insuranceType,
+    insuranceValue: next.insuranceValue,
+    policyStartAt: next.policyStartAt,
+    policyEndAt: next.policyEndAt,
+  });
+  const expected = estimate.amount;
+  const split = splitCommission(
+    devolutionBase({
+      receivedClientAmount: next.receivedClientAmount,
+      expectedClientAmount: expected,
+    })
+  );
+  return {
+    ...next,
+    expectedClientAmount: expected,
+    companyAmount: split.companyAmount,
+    myCommission: split.myCommission,
+  };
+}
+
+function CatalogField({
+  options,
+  value,
+  onChange,
+  otherLabel,
+}: {
+  options: readonly { key: string; title: string }[];
+  value: string;
+  onChange: (next: string) => void;
+  otherLabel: string;
+}) {
+  const [forceOther, setForceOther] = useState(false);
+  const matched = options.some((item) => item.title === value);
+  const showOther = !matched && (forceOther || Boolean(value));
+  const selectValue = showOther ? '__other__' : matched ? value : '';
+  return (
+    <>
+      <select
+        value={selectValue}
+        onChange={(e) => {
+          if (e.target.value === '__other__') {
+            setForceOther(true);
+            if (matched) onChange('');
+            return;
+          }
+          setForceOther(false);
+          onChange(e.target.value);
+        }}
+      >
+        <option value="">Selecionar</option>
+        {options.map((item) => (
+          <option key={item.key} value={item.title}>
+            {item.title}
+          </option>
+        ))}
+        <option value="__other__">{otherLabel}</option>
+      </select>
+      {showOther && (
+        <input
+          className="mt-2"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Informe o nome"
+        />
+      )}
+    </>
+  );
+}
+
+export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, onDeleted }: Props) {
   const [form, setForm] = useState(client);
   const [caseForm, setCaseForm] = useState<Partial<InsuranceCase>>(
     client.cases[0] || emptyCase()
@@ -94,6 +191,8 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
     missingLabels: string[];
     warning: string | null;
   } | null>(null);
+  const [devolutionManual, setDevolutionManual] = useState(false);
+  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
 
   useEffect(() => {
     setForm(client);
@@ -105,7 +204,87 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
     setCepFeedback(null);
     setPolicyFilled(new Set());
     setPdfImport(null);
+    setDevolutionManual(false);
+    setConfirm(null);
   }, [client]);
+
+  const devolution = useMemo(
+    () =>
+      estimateDevolution({
+        insurer: caseForm.insurer,
+        insuranceType: caseForm.insuranceType,
+        insuranceValue: caseForm.insuranceValue,
+        policyStartAt: caseForm.policyStartAt,
+        policyEndAt: caseForm.policyEndAt,
+      }),
+    [
+      caseForm.insurer,
+      caseForm.insuranceType,
+      caseForm.insuranceValue,
+      caseForm.policyStartAt,
+      caseForm.policyEndAt,
+    ]
+  );
+
+  const isDirty = useMemo(() => {
+    if (isNew) {
+      return Boolean(
+        form.name ||
+          form.cpf ||
+          form.phone ||
+          caseForm.insurer ||
+          caseForm.policyNumber ||
+          caseForm.insuranceValue
+      );
+    }
+    const origin = client.cases.find((item) => item.id === selectedCaseId) || client.cases[0] || emptyCase();
+    return (
+      form.name !== client.name ||
+      form.cpf !== client.cpf ||
+      form.phone !== client.phone ||
+      form.email !== client.email ||
+      form.city !== client.city ||
+      form.uf !== client.uf ||
+      form.obs !== client.obs ||
+      form.doNotContact !== client.doNotContact ||
+      form.taskDate !== client.taskDate ||
+      (caseForm.insurer || '') !== (origin.insurer || '') ||
+      (caseForm.policyNumber || '') !== (origin.policyNumber || '') ||
+      (caseForm.insuranceType || '') !== (origin.insuranceType || '') ||
+      (caseForm.insuranceValue ?? null) !== (origin.insuranceValue ?? null) ||
+      (caseForm.expectedClientAmount ?? null) !== (origin.expectedClientAmount ?? null) ||
+      (caseForm.policyStartAt || '') !== (origin.policyStartAt || '') ||
+      (caseForm.policyEndAt || '') !== (origin.policyEndAt || '') ||
+      (caseForm.status || '') !== (origin.status || '')
+    );
+  }, [isNew, form, caseForm, client, selectedCaseId]);
+
+  const requestClose = () => {
+    if (!isDirty) {
+      onClose();
+      return;
+    }
+    setConfirm({
+      title: 'Fechar sem salvar?',
+      message: 'Há alterações que ainda não foram gravadas. Se fechar agora, esse preenchimento será perdido.',
+      confirmLabel: 'Fechar mesmo assim',
+      danger: true,
+      action: onClose,
+    });
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (confirm) {
+        setConfirm(null);
+        return;
+      }
+      requestClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [confirm, isDirty, onClose]);
 
   const clearPolicyMark = (key: string) => {
     setPolicyFilled((prev) => {
@@ -125,19 +304,13 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
   };
 
   const setCaseField = (key: string, value: unknown) => {
+    const sourceKeys = ['insurer', 'insuranceType', 'insuranceValue', 'policyStartAt', 'policyEndAt'];
+    if (key === 'expectedClientAmount') setDevolutionManual(true);
+    if (sourceKeys.includes(key)) setDevolutionManual(false);
     setCaseForm((prev) => {
       const next = { ...prev, [key]: value };
-      if (key === 'expectedClientAmount' || key === 'receivedClientAmount') {
-        const split = splitCommission(
-          devolutionBase({
-            receivedClientAmount: next.receivedClientAmount,
-            expectedClientAmount: next.expectedClientAmount,
-          })
-        );
-        next.companyAmount = split.companyAmount;
-        next.myCommission = split.myCommission;
-      }
-      return next;
+      const manual = key === 'expectedClientAmount' ? true : sourceKeys.includes(key) ? false : devolutionManual;
+      return applyDevolution(next, manual);
     });
     clearPolicyMark(key);
   };
@@ -250,14 +423,22 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
         city: fields.city || prev.city,
         uf: fields.uf || prev.uf,
       }));
-      setCaseForm((prev) => ({
-        ...prev,
-        policyNumber: fields.policyNumber || prev.policyNumber,
-        insurer: fields.insurer || prev.insurer,
-        insuranceType: fields.insuranceType || prev.insuranceType,
-        insuranceValue: fields.insuranceValue ?? prev.insuranceValue,
-        identifiedAt: fields.identifiedAt || prev.identifiedAt,
-      }));
+      setDevolutionManual(false);
+      setCaseForm((prev) =>
+        applyDevolution(
+          {
+            ...prev,
+            policyNumber: fields.policyNumber || prev.policyNumber,
+            insurer: catalogInsurerTitle(fields.insurer) || fields.insurer || prev.insurer,
+            insuranceType: catalogTypeTitle(fields.insuranceType) || fields.insuranceType || prev.insuranceType,
+            insuranceValue: fields.insuranceValue ?? prev.insuranceValue,
+            identifiedAt: fields.identifiedAt || prev.identifiedAt,
+            policyStartAt: fields.policyStartAt || prev.policyStartAt,
+            policyEndAt: fields.policyEndAt || prev.policyEndAt,
+          },
+          false
+        )
+      );
 
       const important: (keyof ParsedPolicy)[] = ['name', 'cpf', 'policyNumber', 'phone'];
       setPdfImport({
@@ -439,11 +620,98 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
   const selectCase = (id: string) => {
     const found = form.cases.find((c) => c.id === id);
     setSelectedCaseId(id);
+    setDevolutionManual(false);
     if (found) setCaseForm(found);
   };
 
+  const deleteSelectedCase = async () => {
+    if (!selectedCaseId || isNew) return;
+    const remaining = form.cases.filter((item) => item.id !== selectedCaseId);
+    const label = [caseForm.insurer, caseForm.policyNumber].filter(Boolean).join(' · ') || 'apólice';
+    await fetch(`/api/clients/${form.id}/history`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ txt: `Caso ${label} excluído.` }),
+    });
+    const res = await fetch(`/api/cases/${selectedCaseId}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || 'Não foi possível excluir o caso.');
+      return;
+    }
+    const refreshed = await fetch(`/api/clients/${form.id}`);
+    const saved = await refreshed.json();
+    setForm(saved);
+    if (remaining.length) {
+      setSelectedCaseId(remaining[0].id);
+      setCaseForm(remaining[0]);
+    } else {
+      setSelectedCaseId('');
+      setCaseForm(emptyCase());
+    }
+    onSaved(saved);
+  };
+
+  const deleteClient = async () => {
+    if (isNew || !form.id) return;
+    const res = await fetch(`/api/clients/${form.id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      setError(data.error || 'Não foi possível excluir o cliente.');
+      return;
+    }
+    onDeleted?.();
+    onClose();
+  };
+
+  const askDeleteCase = () => {
+    const label = [caseForm.insurer, caseForm.policyNumber].filter(Boolean).join(' · ') || 'esta apólice';
+    const last = form.cases.length <= 1;
+    setConfirm({
+      title: last ? 'Excluir a última apólice?' : 'Excluir esta apólice?',
+      message: last
+        ? `Excluir ${label} remove o único caso deste cliente. Na sequência vamos perguntar se o cadastro do cliente também deve ser apagado. Não dá para desfazer.`
+        : `Excluir ${label}? Documentos deste caso também saem. Não dá para desfazer.`,
+      confirmLabel: 'Excluir apólice',
+      danger: true,
+      action: async () => {
+        await deleteSelectedCase();
+        if (last) {
+          setConfirm({
+            title: 'Excluir também o cliente?',
+            message: `${form.name || 'Este cliente'} ficou sem apólice. Excluir o cadastro inteiro? Não dá para desfazer.`,
+            confirmLabel: 'Excluir cliente',
+            danger: true,
+            action: deleteClient,
+          });
+        }
+      },
+    });
+  };
+
+  const askDeleteClient = () => {
+    setConfirm({
+      title: 'Excluir cliente?',
+      message: `Excluir ${form.name || 'este cliente'} e todas as apólices/documentos? Não dá para desfazer.`,
+      confirmLabel: 'Excluir cliente',
+      danger: true,
+      action: deleteClient,
+    });
+  };
+
+  const askRemoveDoc = (docId: string, filename: string) => {
+    setConfirm({
+      title: 'Remover arquivo?',
+      message: `Remover ${filename} desta apólice? Não dá para desfazer.`,
+      confirmLabel: 'Remover arquivo',
+      danger: true,
+      action: () => removeDoc(docId),
+    });
+  };
+
   return (
-    <div className="overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+    <>
+    <ModalOverlay onClose={requestClose}>
       <div className="modal wide">
         <div className="modal-grabber" />
 
@@ -491,7 +759,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
             )}
             <button
               type="button"
-              onClick={onClose}
+              onClick={requestClose}
               className="p-2 rounded-xl text-[var(--ink-soft)] hover:text-[var(--ink)] hover:bg-[var(--line-strong)] transition-colors shrink-0"
               aria-label="Fechar modal"
             >
@@ -719,8 +987,10 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
                       className={`case-chip ${isActive ? 'active' : ''}`}
                       onClick={() => selectCase(c.id)}
                     >
-                      <span className="font-bold">{c.insurer || 'Sem seguradora'}</span>
-                      <span className="opacity-70 font-mono text-xs">{c.policyNumber ? `· ${c.policyNumber}` : ''}</span>
+                      <span className="font-bold">{c.insuranceType || c.insurer || 'Sem tipo'}</span>
+                      <span className="opacity-70 font-mono text-xs">
+                        {[c.insurer, c.policyNumber].filter(Boolean).join(' · ')}
+                      </span>
                       <span className="text-[11px] font-sans">({stageByKey(c.status).title})</span>
                     </button>
                   );
@@ -734,7 +1004,12 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
                   Seguradora
                   {fromPolicy('insurer') && <span className="policy-tag">apólice</span>}
                 </label>
-                <input value={caseForm.insurer || ''} onChange={(e) => setCaseField('insurer', e.target.value)} placeholder="Ex: Porto Seguro, Bradesco..." />
+                <CatalogField
+                  options={INSURERS}
+                  value={catalogInsurerTitle(caseForm.insurer) || caseForm.insurer || ''}
+                  onChange={(next) => setCaseField('insurer', next)}
+                  otherLabel="Outra"
+                />
               </div>
               <div className={fieldClass('policyNumber')}>
                 <label>
@@ -751,7 +1026,12 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
                   Tipo do Seguro
                   {fromPolicy('insuranceType') && <span className="policy-tag">apólice</span>}
                 </label>
-                <input value={caseForm.insuranceType || ''} onChange={(e) => setCaseField('insuranceType', e.target.value)} placeholder="Ex: Prestamista, Vida..." />
+                <CatalogField
+                  options={INSURANCE_TYPES}
+                  value={catalogTypeTitle(caseForm.insuranceType) || caseForm.insuranceType || ''}
+                  onChange={(next) => setCaseField('insuranceType', next)}
+                  otherLabel="Outro"
+                />
               </div>
               <div className={fieldClass('identifiedAt')}>
                 <label>
@@ -763,6 +1043,23 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
               <div className="field">
                 <label>Quantidade de Seguros</label>
                 <input type="number" min={1} value={caseForm.quantity || 1} onChange={(e) => setCaseField('quantity', Number(e.target.value))} className="font-mono" />
+              </div>
+            </div>
+
+            <div className="row2">
+              <div className={fieldClass('policyStartAt')}>
+                <label>
+                  Vigência início
+                  {fromPolicy('policyStartAt') && <span className="policy-tag">apólice</span>}
+                </label>
+                <input type="date" value={caseForm.policyStartAt || ''} onChange={(e) => setCaseField('policyStartAt', e.target.value)} />
+              </div>
+              <div className={fieldClass('policyEndAt')}>
+                <label>
+                  Vigência fim
+                  {fromPolicy('policyEndAt') && <span className="policy-tag">apólice</span>}
+                </label>
+                <input type="date" value={caseForm.policyEndAt || ''} onChange={(e) => setCaseField('policyEndAt', e.target.value)} />
               </div>
             </div>
 
@@ -829,21 +1126,26 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
               </div>
             </div>
 
-            {(() => {
-              const base = devolutionBase({
-                receivedClientAmount: caseForm.receivedClientAmount,
-                expectedClientAmount: caseForm.expectedClientAmount,
-              });
-              if (!base) return null;
-              const usingReceived = Boolean(caseForm.receivedClientAmount && caseForm.receivedClientAmount > 0);
-              return (
-                <p className="m-0 mb-3 text-[11px] font-mono text-[var(--ink-soft)] leading-relaxed">
-                  Comissão automática sobre a {usingReceived ? 'devolução recebida' : 'devolução prevista'}{' '}
-                  ({fmtMoney(base)}): empresa 30% = {fmtMoney(caseForm.companyAmount)} · sua parte 50% dessa
-                  taxa = {fmtMoney(caseForm.myCommission)}.
-                </p>
-              );
-            })()}
+            <p className="m-0 mb-3 text-[11px] font-mono text-[var(--ink-soft)] leading-relaxed">
+              {devolution.hint}
+              {devolutionManual ? ' Valor previsto editado manualmente.' : ''}
+              {(() => {
+                const base = devolutionBase({
+                  receivedClientAmount: caseForm.receivedClientAmount,
+                  expectedClientAmount: caseForm.expectedClientAmount,
+                });
+                if (!base) return null;
+                const usingReceived = Boolean(caseForm.receivedClientAmount && caseForm.receivedClientAmount > 0);
+                return (
+                  <>
+                    {' '}
+                    Comissão sobre a {usingReceived ? 'devolução recebida' : 'devolução prevista'} ({fmtMoney(base)}
+                    ): empresa 30% = {fmtMoney(caseForm.companyAmount)} · sua parte 50% dessa taxa ={' '}
+                    {fmtMoney(caseForm.myCommission)}.
+                  </>
+                );
+              })()}
+            </p>
 
             <div className="row3">
               <div className="field">
@@ -964,7 +1266,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
                       <a className="btn btn-ghost btn-small" href={`/api/cases/${selectedCaseId}/documents/${d.id}`} download>
                         <Download className="w-3 h-3" /> Baixar
                       </a>
-                      <button className="btn btn-danger btn-small" type="button" onClick={() => removeDoc(d.id)}>
+                      <button className="btn btn-danger btn-small" type="button" onClick={() => askRemoveDoc(d.id, d.filename)}>
                         <Trash2 className="w-3 h-3" /> Remover
                       </button>
                     </div>
@@ -1029,8 +1331,18 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
               </span>
             )}
           </div>
-          <div className="right">
-            <button className="btn btn-ghost" type="button" onClick={onClose}>
+          <div className="right flex flex-wrap gap-2 justify-end">
+            {!isNew && selectedCaseId && (
+              <button className="btn btn-danger btn-small" type="button" onClick={askDeleteCase}>
+                <Trash2 className="w-3.5 h-3.5" /> Excluir apólice
+              </button>
+            )}
+            {!isNew && form.id && (
+              <button className="btn btn-danger btn-small" type="button" onClick={askDeleteClient}>
+                <Trash2 className="w-3.5 h-3.5" /> Excluir cliente
+              </button>
+            )}
+            <button className="btn btn-ghost" type="button" onClick={requestClose}>
               Cancelar
             </button>
             <button className="btn" type="button" onClick={persist} disabled={saving}>
@@ -1039,6 +1351,21 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved }
           </div>
         </div>
       </div>
-    </div>
+    </ModalOverlay>
+      {confirm && (
+        <ConfirmDialog
+          title={confirm.title}
+          message={confirm.message}
+          confirmLabel={confirm.confirmLabel}
+          danger={confirm.danger !== false}
+          onCancel={() => setConfirm(null)}
+          onConfirm={async () => {
+            const run = confirm.action;
+            setConfirm(null);
+            await run();
+          }}
+        />
+      )}
+    </>
   );
 }

@@ -117,9 +117,11 @@ async function main() {
         create: {
           tenantId: tenant.id,
           policyNumber: 'APL-2044',
-          insurer: 'Bradesco Seguros',
+          insurer: 'Bradesco',
           insuranceType: 'Prestamista',
           identifiedAt: todayOffset(-25),
+          policyStartAt: todayOffset(-400),
+          policyEndAt: todayOffset(330),
           quantity: 1,
           insuranceValue: 6200,
           status: CaseStatus.NAO_ACEITOU,

@@ -13,6 +13,8 @@ export type ParsedPolicy = {
   insuranceType: string | null;
   insuranceValue: number | null;
   identifiedAt: string | null;
+  policyStartAt: string | null;
+  policyEndAt: string | null;
 };
 
 export type PolicyParseResult = {
@@ -34,7 +36,9 @@ export const POLICY_FIELD_LABELS: Record<keyof ParsedPolicy, string> = {
   insurer: 'Seguradora',
   insuranceType: 'Tipo',
   insuranceValue: 'Valor',
-  identifiedAt: 'Vigência',
+  identifiedAt: 'Identificado em',
+  policyStartAt: 'Vigência início',
+  policyEndAt: 'Vigência fim',
 };
 
 const COMPANY_CEP = new Set(['01310917', '06029900', '06472900', '01310900']);
@@ -122,7 +126,27 @@ function findPersonCpf(text: string) {
   return (afterLabel || people[0]).digits;
 }
 
+function insuredBlock(text: string) {
+  const start = text.search(/DADOS DO SEGURADO/i);
+  if (start < 0) return '';
+  const rest = text.slice(start);
+  const end = rest.search(/\nDADOS DO ESTIPULANTE|\nDADOS DO BENEF/i);
+  return (end > 0 ? rest.slice(0, end) : rest.slice(0, 1400)).trim();
+}
+
+function toIsoDate(hit: string) {
+  const [dd, mm, yyyy] = hit.split('/');
+  const date = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 function findName(text: string, cpf: string | null) {
+  const block = insuredBlock(text);
+  const named = block.match(/Nome:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80}?)(?:\s+Tipo de pessoa|\s+Data de)/i);
+  const fromBlock = named ? titleCaseName(named[1]) : null;
+  if (fromBlock) return fromBlock;
+
   const caro = text.match(/Caro\s*\(?\s*a\s*\)?\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i);
   const fromCaro = caro ? titleCaseName(caro[1]) : null;
   if (fromCaro) return fromCaro;
@@ -152,6 +176,9 @@ function findName(text: string, cpf: string | null) {
 }
 
 function findPolicyNumber(text: string) {
+  const bbApolice = text.match(/N[ºo°]?\s*Ap[oó]lice:\s*(\d{4,12})/i);
+  if (bbApolice) return bbApolice[1];
+
   const dashed = text.match(/\b(\d{3}-\d{6,7}-\d{4,6})\b/);
   if (dashed) return dashed[1];
 
@@ -186,6 +213,13 @@ function isLikelyPhone(digits: string) {
 }
 
 function findPhone(text: string) {
+  const block = insuredBlock(text);
+  const bbPhone = block.match(/Telefone:\s*(\d{2})[-\s]?(\d{8,9})/i);
+  if (bbPhone) {
+    const combined = `${bbPhone[1]}${bbPhone[2]}`;
+    if (isLikelyPhone(combined)) return combined;
+  }
+
   const ddd = text.match(/\bDDD\s*\n\s*0?(\d{2})\b/i)?.[1];
   const afterUf = text.match(/UF Telefone\s*\n\s*[A-Z]{2}\s+(\d{8,11})/i)?.[1];
   if (ddd && afterUf) {
@@ -205,13 +239,21 @@ function findPhone(text: string) {
 }
 
 function findEmail(text: string) {
+  const block = insuredBlock(text);
+  const fromBlock = block.match(/E-?mail:\s*([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  if (fromBlock) return fromBlock[1].toLowerCase();
+
   const match = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   if (!match) return null;
-  if (/bradesco|susep|segur/i.test(match[0])) return null;
+  if (/bradesco|susep|segur|brasilseg/i.test(match[0])) return null;
   return match[0].toLowerCase();
 }
 
 function findCep(text: string) {
+  const block = insuredBlock(text);
+  const bbCep = block.match(/\bCEP:\s*(\d{5}-?\d{3})\b/i);
+  if (bbCep) return digitsOnly(bbCep[1]);
+
   const certificado = new Set(
     Array.from(text.matchAll(/\bCertificado\s*\n\s*(\d{5,12})\b/gi)).map((m) => digitsOnly(m[1]))
   );
@@ -231,6 +273,12 @@ function findCep(text: string) {
 
 function findCityUf(text: string) {
   const prettyCity = (raw: string) => prettyWords(raw, 1);
+  const block = insuredBlock(text);
+  const bbCity = block.match(/Cidade:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{3,40})/i);
+  const bbUf = block.match(/\bUF:\s*([A-Z]{2})\b/i);
+  if (bbCity && bbUf) {
+    return { city: prettyCity(bbCity[1]), uf: bbUf[1].toUpperCase() };
+  }
 
   const dados = text.match(
     /Dados do Segurado[\s\S]{0,900}?Cidade\s*\n\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{3,40})\s*\n\s*UF[^\n]*\n\s*([A-Z]{2})/i
@@ -254,6 +302,7 @@ function findCityUf(text: string) {
 }
 
 function findInsurer(text: string) {
+  if (/BRASILSEG|BB SEGUROS|BANCO DO BRASIL S\.A/i.test(text)) return 'Banco do Brasil';
   if (/BRADESCO AUTO\/RE|AUTO\/RE COMPANHIA/i.test(text)) return 'Bradesco Seguros';
   if (/Bradesco Vida e Previd[eê]ncia/i.test(text)) return 'Bradesco Vida e Previdência';
   if (/Bradesco Seguros/i.test(text)) return 'Bradesco Seguros';
@@ -266,7 +315,7 @@ function findInsurer(text: string) {
 }
 
 function findType(text: string) {
-  if (/prestamista|cr[eé]dito pessoal|credito pessoal/i.test(text)) return 'Prestamista';
+  if (/prestamista|cr[eé]dito protegido|cr[eé]dito pessoal|credito pessoal/i.test(text)) return 'Prestamista';
   if (/residencial|compreensivo residencial/i.test(text)) return 'Residencial';
   if (/vida inteira|seguro vida/i.test(text)) return 'Vida';
   if (/\bVIDA\b/.test(text) && /BRADESCO VIDA/i.test(text)) return 'Vida';
@@ -274,6 +323,9 @@ function findType(text: string) {
 }
 
 function findValue(text: string) {
+  const bbBruto = text.match(/Pr[eê]mio Bruto\s*Total:\s*R\$\s*([\d.]+,\d{2})/i);
+  if (bbBruto) return parseMoneyToken(bbBruto[1]);
+
   const demonstrativo = text.match(/TOTAL:\s*([\d.]+,\d{2})/i);
   if (demonstrativo) return parseMoneyToken(demonstrativo[1]);
 
@@ -294,16 +346,25 @@ function findValue(text: string) {
   return null;
 }
 
-function findStartDate(text: string) {
+function findVigenciaRange(text: string) {
+  const individual = text.match(
+    /In[ií]cio e T[ée]rmino individual:[\s\S]{0,80}?(\d{2}\/\d{2}\/\d{4})[\s\S]{0,40}?(\d{2}\/\d{2}\/\d{4})/i
+  );
+  if (individual) {
+    return { start: toIsoDate(individual[1]), end: toIsoDate(individual[2]) };
+  }
+
   const vigLine = text.match(/In[ií]cio de Vig[eê]ncia[^\n]{0,80}?(\d{2}\/\d{2}\/\d{4})/i);
   const vigBlock = text.match(/In[ií]cio de Vig[eê]ncia[\s\S]{0,80}?(\d{2}\/\d{2}\/\d{4})/i);
   const clock = text.match(/das 24:00 horas do dia (\d{2}\/\d{2}\/\d{4})/i);
-  const hit = vigLine?.[1] || vigBlock?.[1] || clock?.[1];
-  if (!hit) return null;
-  const [dd, mm, yyyy] = hit.split('/');
-  const date = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return null;
-  return `${yyyy}-${mm}-${dd}`;
+  const endLine =
+    text.match(/Fim de Vig[eê]ncia[^\n]{0,80}?(\d{2}\/\d{2}\/\d{4})/i) ||
+    text.match(/T[ée]rmino de Vig[eê]ncia[^\n]{0,80}?(\d{2}\/\d{2}\/\d{4})/i);
+  const startHit = vigLine?.[1] || vigBlock?.[1] || clock?.[1] || null;
+  return {
+    start: startHit ? toIsoDate(startHit) : null,
+    end: endLine?.[1] ? toIsoDate(endLine[1]) : null,
+  };
 }
 
 export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
@@ -321,6 +382,8 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
     insuranceType: null,
     insuranceValue: null,
     identifiedAt: null,
+    policyStartAt: null,
+    policyEndAt: null,
   };
 
   if (text.replace(/\s/g, '').length < 40) {
@@ -335,6 +398,7 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
 
   const cpf = findPersonCpf(text);
   const { city, uf } = findCityUf(text);
+  const vigencia = findVigenciaRange(text);
   const fields: ParsedPolicy = {
     name: findName(text, cpf),
     cpf,
@@ -347,7 +411,9 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
     insurer: findInsurer(text),
     insuranceType: findType(text),
     insuranceValue: findValue(text),
-    identifiedAt: findStartDate(text),
+    identifiedAt: null,
+    policyStartAt: vigencia.start,
+    policyEndAt: vigencia.end,
   };
 
   const filled = (Object.keys(fields) as (keyof ParsedPolicy)[]).filter(
@@ -359,7 +425,7 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
     filled,
     warning: filled.length
       ? null
-      : 'Não reconhecemos campos neste PDF. Confira se é uma apólice Bradesco (vida, prestamista ou residencial) com texto.',
+      : 'Não reconhecemos campos neste PDF. Confira se é uma apólice com texto selecionável (Bradesco, Banco do Brasil e similares).',
     pageCount,
   };
 }

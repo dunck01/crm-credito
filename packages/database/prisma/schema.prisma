@@ -145,6 +145,8 @@ model InsuranceCase {
   insurer        String?
   insuranceType  String?
   identifiedAt   String?
+  policyStartAt  String?
+  policyEndAt    String?
   quantity       Int         @default(1)
   insuranceValue Decimal?    @db.Decimal(12, 2)
   obs            String?     @db.Text

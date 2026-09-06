@@ -6,7 +6,7 @@ Este arquivo define as regras e convenções que todo agente ou desenvolvedor de
 - **Produto:** CRM interno de restituição de créditos/seguros (Fintech).
 - **Core Stack:** Next.js 14 (App Router), React, Tailwind CSS, Prisma, NextAuth, TypeScript.
 - **Identidade Visual:** Mesa de Crédito Noturna (Navy/Charcoal, Lime `#C8F542`, Teal `#2EE6A6`, Coral/Danger, Paper Bond Cold para light mode).
-- **Regras Imutáveis de Negócio:** Não alterar schema do banco, Prisma, rotas de autenticação, NextAuth ou status do funil sem solicitação explícita.
+- **Regras Imutáveis de Negócio:** Não alterar schema do banco, Prisma, rotas de autenticação, NextAuth ou status do funil sem solicitação explícita. Runbooks: [.agents/skills/funnel-business-lock/SKILL.md](.agents/skills/funnel-business-lock/SKILL.md) e [.agents/skills/tenant-wallet-acl/SKILL.md](.agents/skills/tenant-wallet-acl/SKILL.md).
 
 ## Regras de Qualidade React & Next.js (Doctor Rules)
 1. **Reutilização de Componentes:** Antes de criar qualquer novo JSX, consulte `apps/web/src/components/` e `apps/web/src/components/crm/`. Reutilize modais, botões (`.btn`, `.btn-primary`, `.btn-ghost`), inputs (`.field`), badges de status (`segment-tag`) e utilitários de formatação (`formatCpf`, `formatPhone`, `fmtMoney`).

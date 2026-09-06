@@ -34,6 +34,26 @@ export const DO_NOT_CONTACT_REASONS = [
 
 export const CONTACT_COLUMNS: CaseStatusKey[] = ['AGUARDANDO_CONTATO', 'AGUARDANDO_RESPOSTA'];
 
+export const INSURERS = [
+  { key: 'BRADESCO', title: 'Bradesco' },
+  { key: 'INTER', title: 'Inter' },
+  { key: 'BANCO_DO_BRASIL', title: 'Banco do Brasil' },
+  { key: 'SANTANDER', title: 'Santander' },
+  { key: 'CAIXA', title: 'Caixa Econômica' },
+] as const;
+
+export type InsurerKey = (typeof INSURERS)[number]['key'] | 'OTHER';
+
+export const INSURANCE_TYPES = [
+  { key: 'PRESTAMISTA', title: 'Prestamista' },
+  { key: 'VIDA', title: 'Vida' },
+  { key: 'RESIDENCIAL', title: 'Residencial' },
+  { key: 'CAPITALIZACAO', title: 'Capitalização' },
+  { key: 'PREVIDENCIA', title: 'Previdência' },
+] as const;
+
+export type InsuranceTypeKey = (typeof INSURANCE_TYPES)[number]['key'] | 'OTHER';
+
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 export function isAdminRole(role?: string | null) {

@@ -3,15 +3,24 @@
 import { stageByKey } from '@/lib/constants';
 import { formatCpfCnpj, formatPhone, fmtDateShort, fmtMoney, whatsappLink } from '@/lib/format';
 import type { ClientRecord } from '@/lib/types';
-import { MessageCircle, FileText, Clock, AlertTriangle } from 'lucide-react';
+import { MessageCircle, Clock } from 'lucide-react';
 
 type Props = {
   clients: ClientRecord[];
   onOpen: (client: ClientRecord) => void;
 };
 
-function currentCase(c: ClientRecord) {
-  return c.cases.find((x) => x.status !== 'FINALIZADO' && x.status !== 'PERDIDO') || c.cases[0];
+function visibleCases(c: ClientRecord) {
+  return c.cases;
+}
+
+function displayCase(c: ClientRecord) {
+  const cases = visibleCases(c);
+  return cases.find((x) => x.status !== 'FINALIZADO' && x.status !== 'PERDIDO') || cases[0];
+}
+
+function sumMoney(c: ClientRecord, key: 'insuranceValue' | 'expectedClientAmount') {
+  return visibleCases(c).reduce((acc, item) => acc + (item[key] || 0), 0);
 }
 
 export function TableView({ clients, onOpen }: Props) {
@@ -24,7 +33,9 @@ export function TableView({ clients, onOpen }: Props) {
           </div>
         ) : (
           clients.map((c) => {
-            const openCase = currentCase(c);
+            const openCase = displayCase(c);
+            const caseCount = visibleCases(c).length;
+            const totalValue = sumMoney(c, 'insuranceValue');
             const today = new Date().toISOString().slice(0, 10);
             const overdue = Boolean(c.taskDate && c.taskDate < today);
 
@@ -48,13 +59,14 @@ export function TableView({ clients, onOpen }: Props) {
                       )}
                       <span className="text-[11px] text-[var(--ink-soft)] font-sans font-medium">
                         {openCase ? stageByKey(openCase.status).title : 'Sem caso'}
+                        {caseCount > 1 ? ` · ${caseCount} apólices` : ''}
                       </span>
                     </div>
                   </div>
                 </div>
 
                 <div className="value-side">
-                  <div className="val">{fmtMoney(openCase?.insuranceValue) || '—'}</div>
+                  <div className="val">{fmtMoney(totalValue) || '—'}</div>
                   {c.taskDate && (
                     <div className={`text-[10.5px] font-mono mt-1 flex items-center justify-end gap-1 ${
                       overdue ? 'text-[var(--danger)] font-bold' : 'text-[var(--ink-muted)]'
@@ -79,7 +91,7 @@ export function TableView({ clients, onOpen }: Props) {
               <th>Local</th>
               <th>Seguradora & Apólice</th>
               <th>Etapa Operacional</th>
-              <th className="text-right">Valor Restituição</th>
+              <th className="text-right">Valor das apólices</th>
               <th>Retorno</th>
             </tr>
           </thead>
@@ -92,7 +104,9 @@ export function TableView({ clients, onOpen }: Props) {
               </tr>
             ) : (
               clients.map((c) => {
-                const openCase = currentCase(c);
+                const openCase = displayCase(c);
+            const caseCount = visibleCases(c).length;
+            const totalValue = sumMoney(c, 'insuranceValue');
                 const stage = openCase ? stageByKey(openCase.status) : null;
                 const today = new Date().toISOString().slice(0, 10);
                 const overdue = Boolean(c.taskDate && c.taskDate < today);
@@ -136,16 +150,17 @@ export function TableView({ clients, onOpen }: Props) {
                     </td>
                     <td>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {openCase?.insurer ? (
-                          <span className="segment-tag">{openCase.insurer}</span>
-                        ) : (
+                        {visibleCases(c).length === 0 && (
                           <span className="text-xs text-[var(--ink-muted)]">—</span>
                         )}
-                        {openCase?.policyNumber && (
-                          <span className="credit-code text-[11px]">
-                            <FileText className="w-3 h-3 text-[var(--c-primeiro)]" />
-                            {openCase.policyNumber}
+                        {visibleCases(c).map((item) => (
+                          <span key={item.id} className="segment-tag">
+                            {[item.insuranceType, item.insurer].filter(Boolean).join(' · ') || 'Apólice'}
+                            {item.policyNumber ? ` · ${item.policyNumber}` : ''}
                           </span>
+                        ))}
+                        {caseCount > 1 && (
+                          <span className="text-[11px] font-mono text-[var(--ink-muted)]">{caseCount} apólices</span>
                         )}
                       </div>
                     </td>
@@ -170,7 +185,7 @@ export function TableView({ clients, onOpen }: Props) {
                       )}
                     </td>
                     <td className="text-right font-mono font-bold text-sm text-[var(--accent-lime)] tabular-nums">
-                      {fmtMoney(openCase?.insuranceValue) || '—'}
+                      {fmtMoney(totalValue) || '—'}
                     </td>
                     <td>
                       {c.taskDate ? (

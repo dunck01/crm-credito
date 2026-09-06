@@ -25,6 +25,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         insurer: body.insurer || null,
         insuranceType: body.insuranceType || null,
         identifiedAt: body.identifiedAt || null,
+        policyStartAt: body.policyStartAt || null,
+        policyEndAt: body.policyEndAt || null,
         quantity: Number(body.quantity) || 1,
         insuranceValue: parseMoney(body.insuranceValue),
         obs: body.obs || null,

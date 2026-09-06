@@ -901,6 +901,9 @@ body.light-mode .day-badge-count {
   justify-content: center;
   padding: 0;
 }
+.overlay-front {
+  z-index: 60;
+}
 .modal {
   background: var(--card) !important;
   border-radius: 24px 24px 0 0 !important;
@@ -1230,8 +1233,8 @@ input.money-field-input.text-teal {
   padding: 10px 12px !important;
   min-height: 44px;
 }
-.filters-bar select:last-child {
-  grid-column: 1 / -1;
+.filters-bar .btn {
+  min-height: 44px;
 }
 
 /* Case Chips & Document Rows */
