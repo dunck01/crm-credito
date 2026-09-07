@@ -54,6 +54,33 @@ export const INSURANCE_TYPES = [
 
 export type InsuranceTypeKey = (typeof INSURANCE_TYPES)[number]['key'] | 'OTHER';
 
+export const BANK_ACCOUNT_TYPES = [
+  { key: 'CORRENTE', title: 'Conta corrente' },
+  { key: 'POUPANCA', title: 'Poupança' },
+  { key: 'PAGAMENTO', title: 'Conta pagamento' },
+] as const;
+
+export type BankAccountTypeKey = (typeof BANK_ACCOUNT_TYPES)[number]['key'];
+
+export const BANKS = [
+  { key: 'BB', code: '001', title: 'Banco do Brasil' },
+  { key: 'SANTANDER', code: '033', title: 'Santander' },
+  { key: 'CAIXA', code: '104', title: 'Caixa Econômica' },
+  { key: 'BRADESCO', code: '237', title: 'Bradesco' },
+  { key: 'ITAU', code: '341', title: 'Itaú' },
+  { key: 'INTER', code: '077', title: 'Inter' },
+  { key: 'NUBANK', code: '260', title: 'Nubank' },
+  { key: 'C6', code: '336', title: 'C6 Bank' },
+  { key: 'ORIGINAL', code: '212', title: 'Original' },
+  { key: 'SAFRA', code: '422', title: 'Safra' },
+  { key: 'SICOOB', code: '756', title: 'Sicoob' },
+  { key: 'SICREDI', code: '748', title: 'Sicredi' },
+  { key: 'BANRISUL', code: '041', title: 'Banrisul' },
+  { key: 'PAGBANK', code: '290', title: 'PagBank' },
+  { key: 'PICPAY', code: '380', title: 'PicPay' },
+  { key: 'MERCADO_PAGO', code: '323', title: 'Mercado Pago' },
+] as const;
+
 export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 
 export function isAdminRole(role?: string | null) {

@@ -87,8 +87,9 @@ model Client {
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
-  history ClientHistory[]
-  cases   InsuranceCase[]
+  history      ClientHistory[]
+  cases        InsuranceCase[]
+  bankAccounts ClientBankAccount[]
 
   @@unique([tenantId, cpf])
   @@index([tenantId, isArchived])
@@ -135,6 +136,33 @@ enum DocumentType {
   OUTRO
 }
 
+enum BankAccountType {
+  CORRENTE
+  POUPANCA
+  PAGAMENTO
+}
+
+model ClientBankAccount {
+  id           String          @id @default(cuid())
+  clientId     String
+  client       Client          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  bankName     String
+  bankCode     String?
+  agency       String
+  account      String
+  accountDigit String?
+  accountType  BankAccountType @default(CORRENTE)
+  holderName   String?
+  isPrimary    Boolean         @default(false)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  cases InsuranceCase[]
+
+  @@index([clientId])
+  @@map("client_bank_accounts")
+}
+
 model InsuranceCase {
   id       String @id @default(cuid())
   tenantId String
@@ -167,6 +195,9 @@ model InsuranceCase {
   companyPaidAt     String?
 
   myCommission Decimal? @db.Decimal(12, 2)
+
+  bankAccountId String?
+  bankAccount   ClientBankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

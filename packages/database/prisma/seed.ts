@@ -77,6 +77,18 @@ async function main() {
       history: {
         create: [{ time: todayOffset(0), txt: 'Cliente cadastrada a partir da lista de identificação.' }],
       },
+      bankAccounts: {
+        create: {
+          bankName: 'Itaú',
+          bankCode: '341',
+          agency: '1234',
+          account: '56789',
+          accountDigit: '0',
+          accountType: 'CORRENTE',
+          holderName: 'Maria Silva',
+          isPrimary: true,
+        },
+      },
       cases: {
         create: {
           tenantId: tenant.id,

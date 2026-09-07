@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import { serializeCase } from '@/lib/api-serialize';
 import { ownsClient, requireTenantUser } from '@/lib/session';
+import { resolveOwnedBankAccountId } from '@/lib/bank-account-sync';
 import { parseMoney } from '@/lib/format';
 
 export async function POST(req: Request, { params }: { params: { id: string } }) {
@@ -17,10 +18,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
   try {
     const body = await req.json();
+    const bankAccountId = await resolveOwnedBankAccountId(params.id, body.bankAccountId);
+
     const created = await prisma.insuranceCase.create({
       data: {
         tenantId: user.tenantId,
         clientId: params.id,
+        bankAccountId: bankAccountId || undefined,
         policyNumber: body.policyNumber || null,
         insurer: body.insurer || null,
         insuranceType: body.insuranceType || null,

@@ -1,3 +1,4 @@
+import { catalogBank } from './bank-account';
 import { digitsOnly } from './format';
 
 export type ParsedPolicy = {
@@ -17,8 +18,17 @@ export type ParsedPolicy = {
   policyEndAt: string | null;
 };
 
+export type ParsedBankAccount = {
+  bankName: string;
+  bankCode: string | null;
+  agency: string;
+  account: string;
+  accountDigit: string | null;
+};
+
 export type PolicyParseResult = {
   fields: ParsedPolicy;
+  bankAccount: ParsedBankAccount | null;
   filled: (keyof ParsedPolicy)[];
   warning: string | null;
   pageCount: number;
@@ -346,6 +356,42 @@ function findValue(text: string) {
   return null;
 }
 
+function splitAccount(raw: string) {
+  const cleaned = raw.replace(/\s/g, '');
+  if (/^\d+-\d$/.test(cleaned)) {
+    const [account, accountDigit] = cleaned.split('-');
+    return { account, accountDigit };
+  }
+  return { account: cleaned, accountDigit: null as string | null };
+}
+
+function findBankAccount(text: string): ParsedBankAccount | null {
+  const bankLine =
+    text.match(/\bBanco:\s*(\d{3})\s*[-–]?\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ0-9 ]{3,40})/i) ||
+    text.match(/\bBanco:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ0-9 ]{3,40})/i);
+  const agencyLine =
+    text.match(/Ag[eê]ncia(?:\s+n[ºo°]?)?:\s*(\d{3,6}-?\d?)/i) ||
+    text.match(/\bAg(?:\.)?:\s*(\d{3,6}-?\d?)/i);
+  const accountLine =
+    text.match(/Conta(?:\s+corrente)?(?:\s+n[ºo°]?)?:\s*(\d{4,12}-?\d)/i) ||
+    text.match(/\bC\/C:\s*(\d{4,12}-?\d)/i);
+
+  if (!agencyLine || !accountLine) return null;
+
+  const { account, accountDigit } = splitAccount(accountLine[1]);
+  const codeFromLine = bankLine?.[1] && /^\d{3}$/.test(bankLine[1]) ? bankLine[1] : null;
+  const nameFromLine = bankLine?.[2] || (!codeFromLine ? bankLine?.[1] : null) || null;
+  const catalog = catalogBank(codeFromLine || '') || catalogBank(nameFromLine || '');
+
+  return {
+    bankName: catalog?.title || (nameFromLine ? nameFromLine.replace(/\s{2,}/g, ' ').trim() : ''),
+    bankCode: catalog?.code || codeFromLine,
+    agency: agencyLine[1],
+    account,
+    accountDigit,
+  };
+}
+
 function findVigenciaRange(text: string) {
   const individual = text.match(
     /In[ií]cio e T[ée]rmino individual:[\s\S]{0,80}?(\d{2}\/\d{2}\/\d{4})[\s\S]{0,40}?(\d{2}\/\d{2}\/\d{4})/i
@@ -389,9 +435,10 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
   if (text.replace(/\s/g, '').length < 40) {
     return {
       fields: empty,
+      bankAccount: null,
       filled: [],
       warning:
-        'Este PDF não tem texto selecionável (parece scan ou foto). Use o arquivo gerado pelo banco ou pela seguradora.',
+        'Este PDF não tem texto selecionável (parece scan ou foto). Use o arquivo gerado pelo banco ou pela seguradora (PDF original, não foto).',
       pageCount,
     };
   }
@@ -422,6 +469,7 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
 
   return {
     fields,
+    bankAccount: findBankAccount(text),
     filled,
     warning: filled.length
       ? null

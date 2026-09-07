@@ -22,8 +22,10 @@ import {
 } from '@/lib/format';
 import { devolutionBase, splitCommission } from '@/lib/commission';
 import { catalogInsurerTitle, catalogTypeTitle, estimateDevolution } from '@/lib/devolution';
+import { formatBankAccount, isCompleteBankAccount } from '@/lib/bank-account';
 import type { ClientRecord, InsuranceCase } from '@/lib/types';
-import { POLICY_FIELD_LABELS, type ParsedPolicy } from '@/lib/policy-parse';
+import { POLICY_FIELD_LABELS, type ParsedBankAccount, type ParsedPolicy } from '@/lib/policy-parse';
+import { BankAccountsEditor } from './BankAccountsEditor';
 import { ConfirmDialog } from './ConfirmDialog';
 import { MoneyInput } from './MoneyInput';
 import { ModalOverlay } from './ModalOverlay';
@@ -54,6 +56,7 @@ type Props = {
 };
 
 const emptyCase = (): Partial<InsuranceCase> => ({
+  bankAccountId: '',
   policyNumber: '',
   insurer: '',
   insuranceType: '',
@@ -184,6 +187,8 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
   const [cepLoading, setCepLoading] = useState(false);
   const [cepFeedback, setCepFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [parsingPdf, setParsingPdf] = useState(false);
+  const [pendingPolicyFile, setPendingPolicyFile] = useState<File | null>(null);
+  const [bankFromPolicy, setBankFromPolicy] = useState(false);
   const [policyFilled, setPolicyFilled] = useState<Set<string>>(new Set());
   const [pdfImport, setPdfImport] = useState<{
     filename: string;
@@ -204,6 +209,8 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
     setCepFeedback(null);
     setPolicyFilled(new Set());
     setPdfImport(null);
+    setPendingPolicyFile(null);
+    setBankFromPolicy(false);
     setDevolutionManual(false);
     setConfirm(null);
   }, [client]);
@@ -234,7 +241,9 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
           form.phone ||
           caseForm.insurer ||
           caseForm.policyNumber ||
-          caseForm.insuranceValue
+          caseForm.insuranceValue ||
+          pendingPolicyFile ||
+          (form.bankAccounts || []).some((item) => isCompleteBankAccount(item))
       );
     }
     const origin = client.cases.find((item) => item.id === selectedCaseId) || client.cases[0] || emptyCase();
@@ -255,9 +264,12 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
       (caseForm.expectedClientAmount ?? null) !== (origin.expectedClientAmount ?? null) ||
       (caseForm.policyStartAt || '') !== (origin.policyStartAt || '') ||
       (caseForm.policyEndAt || '') !== (origin.policyEndAt || '') ||
-      (caseForm.status || '') !== (origin.status || '')
+      (caseForm.status || '') !== (origin.status || '') ||
+      (caseForm.bankAccountId || '') !== (origin.bankAccountId || '') ||
+      Boolean(pendingPolicyFile) ||
+      JSON.stringify(form.bankAccounts || []) !== JSON.stringify(client.bankAccounts || [])
     );
-  }, [isNew, form, caseForm, client, selectedCaseId]);
+  }, [isNew, form, caseForm, client, selectedCaseId, pendingPolicyFile]);
 
   const requestClose = () => {
     if (!isDirty) {
@@ -397,6 +409,51 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
     }
   };
 
+  const applyParsedBank = (parsed: ParsedBankAccount | null, holderName: string) => {
+    if (!parsed || !parsed.agency || !parsed.account) return;
+    const existing = (form.bankAccounts || []).find(
+      (item) => item.agency === parsed.agency && item.account === parsed.account
+    );
+    if (existing) {
+      setCaseForm((prev) => (prev.bankAccountId ? prev : { ...prev, bankAccountId: existing.id }));
+      return;
+    }
+    const draftId = `draft-${Date.now()}`;
+    setBankFromPolicy(true);
+    setForm((prev) => ({
+      ...prev,
+      bankAccounts: [
+        ...(prev.bankAccounts || []),
+        {
+          id: draftId,
+          clientId: prev.id || '',
+          bankName: parsed.bankName,
+          bankCode: parsed.bankCode || '',
+          agency: parsed.agency,
+          account: parsed.account,
+          accountDigit: parsed.accountDigit || '',
+          accountType: 'CORRENTE',
+          holderName,
+          isPrimary: (prev.bankAccounts || []).length === 0,
+        },
+      ],
+    }));
+    setCaseForm((prev) => (prev.bankAccountId ? prev : { ...prev, bankAccountId: draftId }));
+  };
+
+  const attachPolicyFile = async (caseId: string, file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('type', 'APOLICE');
+    const res = await fetch(`/api/cases/${caseId}/documents`, { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setError(data.error || 'Os dados foram lidos, mas o PDF não pôde ser anexado.');
+      return false;
+    }
+    return true;
+  };
+
   const importPolicyPdf = async (file: File) => {
     setParsingPdf(true);
     setError('');
@@ -413,6 +470,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
 
       const fields = (data.fields || {}) as ParsedPolicy;
       const filled = (data.filled || []) as (keyof ParsedPolicy)[];
+      const filledLabels = filled.map((key) => POLICY_FIELD_LABELS[key]).filter(Boolean);
       setPolicyFilled(new Set(filled));
       setForm((prev) => ({
         ...prev,
@@ -439,11 +497,30 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
           false
         )
       );
+      applyParsedBank(data.bankAccount || null, fields.name || form.name);
+      if (data.bankAccount) filledLabels.push('Banco');
+
+      if (!isNew && selectedCaseId) {
+        const attached = await attachPolicyFile(selectedCaseId, file);
+        setPendingPolicyFile(attached ? null : file);
+        if (attached) {
+          const refreshed = await fetch(`/api/clients/${form.id}`);
+          if (refreshed.ok) {
+            const saved = await refreshed.json();
+            const nextCase = saved.cases.find((c: InsuranceCase) => c.id === selectedCaseId);
+            if (nextCase) {
+              setCaseForm((prev) => ({ ...prev, documents: nextCase.documents }));
+            }
+          }
+        }
+      } else {
+        setPendingPolicyFile(file);
+      }
 
       const important: (keyof ParsedPolicy)[] = ['name', 'cpf', 'policyNumber', 'phone'];
       setPdfImport({
         filename: data.filename || file.name,
-        filledLabels: filled.map((key) => POLICY_FIELD_LABELS[key]).filter(Boolean),
+        filledLabels,
         missingLabels: important
           .filter((key) => !filled.includes(key))
           .map((key) => POLICY_FIELD_LABELS[key]),
@@ -453,7 +530,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
       if (fields.cep) await handleCepChange(fields.cep, true);
       if (fields.cpf) await lookupCpf(fields.cpf);
     } catch {
-      setError('Erro ao enviar o PDF.');
+      setError('Erro ao enviar o PDF. No celular, escolha o arquivo PDF (não uma foto da tela).');
     } finally {
       setParsingPdf(false);
     }
@@ -463,6 +540,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
     setSaving(true);
     setError('');
     try {
+      const completeBanks = (form.bankAccounts || []).filter(isCompleteBankAccount);
       const payload = {
         name: form.name,
         cpf: form.cpf,
@@ -476,6 +554,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
         lastContactDate: form.lastContactDate,
         taskDate: form.taskDate,
         taskTime: form.taskTime,
+        bankAccounts: completeBanks,
         case: isNew ? caseForm : undefined,
       };
 
@@ -516,10 +595,19 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
         saved = data;
 
         if (selectedCaseId) {
+          const wanted = completeBanks.find((item) => item.id && item.id === caseForm.bankAccountId);
+          const resolvedBank =
+            saved.bankAccounts.find((item) => item.id === caseForm.bankAccountId)?.id ||
+            saved.bankAccounts.find(
+              (item) => wanted && item.agency === wanted.agency && item.account === wanted.account
+            )?.id ||
+            saved.bankAccounts.find((item) => item.isPrimary)?.id ||
+            saved.bankAccounts[0]?.id ||
+            '';
           const caseRes = await fetch(`/api/cases/${selectedCaseId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(caseForm),
+            body: JSON.stringify({ ...caseForm, bankAccountId: resolvedBank }),
           });
           const caseData = await caseRes.json();
           if (!caseRes.ok) {
@@ -530,6 +618,16 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
         }
         const refreshed = await fetch(`/api/clients/${form.id}`);
         saved = await refreshed.json();
+      }
+
+      const caseId = selectedCaseId || saved.cases[0]?.id;
+      if (pendingPolicyFile && caseId) {
+        const attached = await attachPolicyFile(caseId, pendingPolicyFile);
+        if (attached) {
+          setPendingPolicyFile(null);
+          const refreshed = await fetch(`/api/clients/${saved.id}`);
+          if (refreshed.ok) saved = await refreshed.json();
+        }
       }
 
       onSaved(saved);
@@ -545,10 +643,14 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
       setError('Salve o cliente antes de adicionar outro caso.');
       return;
     }
+    const primary = (form.bankAccounts || []).find((item) => item.isPrimary) || (form.bankAccounts || [])[0];
     const res = await fetch(`/api/clients/${form.id}/cases`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(emptyCase()),
+      body: JSON.stringify({
+        ...emptyCase(),
+        bankAccountId: primary && !primary.id.startsWith('draft-') ? primary.id : '',
+      }),
     });
     const data = await res.json();
     if (!res.ok) {
@@ -788,7 +890,9 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
             filledLabels={pdfImport?.filledLabels || []}
             missingLabels={pdfImport?.missingLabels || []}
             warning={pdfImport?.warning || null}
+            pendingAttach={Boolean(pendingPolicyFile)}
             onPick={importPolicyPdf}
+            onReject={setError}
           />
 
           {/* HIERARQUIA 1: IDENTIDADE DO CLIENTE */}
@@ -960,6 +1064,13 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
             </div>
           </div>
 
+          <BankAccountsEditor
+            accounts={form.bankAccounts || []}
+            holderName={form.name}
+            fromPolicy={bankFromPolicy}
+            onChange={(bankAccounts) => setForm((prev) => ({ ...prev, bankAccounts }))}
+          />
+
           {/* HIERARQUIA 2: CASOS E APÓLICES */}
           <div className="mb-4 sm:mb-5 p-3 sm:p-4 rounded-xl bg-[var(--paper)] border border-[var(--line)]">
             <div className="flex items-center justify-between mb-3 pb-2 border-b border-[var(--line)] flex-wrap gap-2">
@@ -1084,6 +1195,33 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
                   ))}
                 </select>
               </div>
+            </div>
+
+            <div className="field mb-0">
+              <label>Conta para depósito desta apólice</label>
+              <select
+                value={caseForm.bankAccountId || ''}
+                onChange={(e) => setCaseField('bankAccountId', e.target.value)}
+              >
+                <option value="">Selecionar conta do cliente</option>
+                {(form.bankAccounts || []).filter(isCompleteBankAccount).map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {formatBankAccount(account)}
+                    {account.isPrimary ? ' · principal' : ''}
+                  </option>
+                ))}
+              </select>
+              {(form.bankAccounts || []).filter(isCompleteBankAccount).length === 0 && (
+                <p className="m-0 mt-2 text-[11px] font-mono text-[var(--ink-soft)]">
+                  Cadastre banco, agência e conta acima para vincular a restituição deste caso.
+                </p>
+              )}
+              {(caseForm.status === 'PAGAMENTO' || caseForm.status === 'FINALIZADO') &&
+                !caseForm.bankAccountId && (
+                  <p className="m-0 mt-2 text-[11px] font-mono text-[var(--c-semresp)]">
+                    Esta apólice está em pagamento. Vincule a conta do cliente para o depósito.
+                  </p>
+                )}
             </div>
           </div>
 
@@ -1229,11 +1367,11 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
                     </option>
                   ))}
                 </select>
-                <label className="btn btn-ghost btn-small cursor-pointer">
-                  <span>Selecionar Arquivo</span>
+                <label className="btn btn-ghost btn-small cursor-pointer relative overflow-hidden">
+                  <span>Selecionar arquivo</span>
                   <input
                     type="file"
-                    className="hidden"
+                    className="policy-drop-input"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (file) uploadFile(file);

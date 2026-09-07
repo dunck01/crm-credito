@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import { clientInclude, serializeClient } from '@/lib/api-serialize';
+import { syncClientBankAccounts } from '@/lib/bank-account-sync';
 import { digitsOnly } from '@/lib/format';
 import { ownsClient, requireTenantUser } from '@/lib/session';
 
@@ -69,11 +70,27 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
       data.doNotContactReason = body.doNotContactReason || null;
     }
 
-    const updated = await prisma.client.update({
+    await prisma.client.update({
       where: { id: params.id },
       data,
+    });
+
+    if (Array.isArray(body.bankAccounts)) {
+      await syncClientBankAccounts(
+        params.id,
+        body.bankAccounts,
+        String((data.name as string | undefined) || result.client!.name)
+      );
+    }
+
+    const updated = await prisma.client.findFirst({
+      where: { id: params.id },
       include: clientInclude,
     });
+
+    if (!updated) {
+      return NextResponse.json({ error: 'Cliente não encontrado.' }, { status: 404 });
+    }
 
     return NextResponse.json(serializeClient(updated));
   } catch (err: any) {

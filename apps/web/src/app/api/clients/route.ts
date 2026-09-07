@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@crm-credito/database';
 import { clientInclude, serializeClient } from '@/lib/api-serialize';
+import { resolveOwnedBankAccountId, syncClientBankAccounts } from '@/lib/bank-account-sync';
 import { digitsOnly, parseMoney } from '@/lib/format';
 import { requireTenantUser } from '@/lib/session';
 
@@ -112,7 +113,32 @@ export async function POST(req: Request) {
       include: clientInclude,
     });
 
-    return NextResponse.json(serializeClient(created), { status: 201 });
+    if (Array.isArray(body.bankAccounts)) {
+      await syncClientBankAccounts(created.id, body.bankAccounts, name);
+      const wantedBankId = await resolveOwnedBankAccountId(
+        created.id,
+        body.case?.bankAccountId
+      );
+      const primary = await prisma.clientBankAccount.findFirst({
+        where: { clientId: created.id, isPrimary: true },
+        select: { id: true },
+      });
+      const caseId = created.cases[0]?.id;
+      const attachId = wantedBankId || primary?.id || null;
+      if (caseId && attachId) {
+        await prisma.insuranceCase.update({
+          where: { id: caseId },
+          data: { bankAccountId: attachId },
+        });
+      }
+    }
+
+    const reloaded = await prisma.client.findFirst({
+      where: { id: created.id },
+      include: clientInclude,
+    });
+
+    return NextResponse.json(serializeClient(reloaded || created), { status: 201 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message || 'Erro ao criar cliente.' }, { status: 500 });
   }

@@ -1047,6 +1047,7 @@ input.money-field-input.text-teal {
   margin-bottom: 16px;
 }
 .policy-drop {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: flex-start;
@@ -1059,6 +1060,16 @@ input.money-field-input.text-teal {
   color: var(--ink);
   cursor: pointer;
   min-height: 72px;
+}
+.policy-drop-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 16px;
+  z-index: 2;
 }
 .policy-drop.is-drag,
 .policy-drop:hover:not(:disabled) {
@@ -1137,6 +1148,44 @@ input.money-field-input.text-teal {
 .policy-missing {
   margin-top: 8px !important;
   color: var(--ink-soft);
+}
+.policy-anyfile {
+  position: relative;
+  display: block;
+  margin-top: 8px;
+  min-height: 44px;
+  padding: 10px 4px;
+  font-size: 12px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--accent-teal);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.bank-card {
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--paper-elevated);
+}
+.bank-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+.bank-primary.is-on {
+  color: var(--accent-teal);
+  border-color: color-mix(in srgb, var(--accent-teal) 45%, var(--line));
+  background: color-mix(in srgb, var(--accent-teal) 12%, transparent);
 }
 .row2, .row3 {
   display: grid;

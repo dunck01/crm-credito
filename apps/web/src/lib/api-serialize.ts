@@ -1,3 +1,4 @@
+import { serializeBankAccount } from './bank-account';
 import { decimalNumber } from './format';
 
 const documentSelect = {
@@ -12,6 +13,7 @@ const documentSelect = {
 export const clientInclude = {
   assignedUser: { select: { id: true, name: true, email: true } },
   history: { orderBy: { createdAt: 'desc' as const } },
+  bankAccounts: { orderBy: [{ isPrimary: 'desc' as const }, { createdAt: 'asc' as const }] },
   cases: {
     orderBy: { createdAt: 'desc' as const },
     include: {
@@ -23,6 +25,7 @@ export const clientInclude = {
 export function serializeCase(c: any) {
   return {
     ...c,
+    bankAccountId: c.bankAccountId || '',
     policyNumber: c.policyNumber || '',
     insurer: c.insurer || '',
     insuranceType: c.insuranceType || '',
@@ -69,6 +72,7 @@ export function serializeClient(c: any) {
     doNotContactReason: c.doNotContactReason || null,
     isArchived: Boolean(c.isArchived),
     history: c.history || [],
+    bankAccounts: (c.bankAccounts || []).map(serializeBankAccount),
     cases: (c.cases || []).map(serializeCase),
   };
 }

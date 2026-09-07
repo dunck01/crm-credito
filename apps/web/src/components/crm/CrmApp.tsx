@@ -34,6 +34,7 @@ const blankClient = (userId: string): ClientRecord => ({
   isArchived: false,
   history: [],
   cases: [],
+  bankAccounts: [],
 });
 
 export function CrmApp() {

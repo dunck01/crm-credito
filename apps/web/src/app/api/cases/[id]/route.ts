@@ -3,6 +3,7 @@ import { prisma, CaseStatus } from '@crm-credito/database';
 import { serializeCase } from '@/lib/api-serialize';
 import { parseMoney } from '@/lib/format';
 import { ownsClient, requireTenantUser } from '@/lib/session';
+import { resolveOwnedBankAccountId } from '@/lib/bank-account-sync';
 import { CASE_STAGES } from '@/lib/constants';
 
 const VALID_STATUS = new Set(CASE_STAGES.map((s) => s.key));
@@ -49,9 +50,15 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
       );
     }
 
+    const bankAccountId =
+      body.bankAccountId !== undefined
+        ? await resolveOwnedBankAccountId(existing.clientId, body.bankAccountId)
+        : undefined;
+
     const updated = await prisma.insuranceCase.update({
       where: { id: params.id },
       data: {
+        bankAccountId,
         policyNumber: body.policyNumber !== undefined ? body.policyNumber || null : undefined,
         insurer: body.insurer !== undefined ? body.insurer || null : undefined,
         insuranceType: body.insuranceType !== undefined ? body.insuranceType || null : undefined,

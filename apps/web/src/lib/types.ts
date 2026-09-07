@@ -24,10 +24,26 @@ export type CaseDocumentMeta = {
   createdAt: string;
 };
 
+export type ClientBankAccount = {
+  id: string;
+  clientId: string;
+  bankName: string;
+  bankCode: string;
+  agency: string;
+  account: string;
+  accountDigit: string;
+  accountType: string;
+  holderName: string;
+  isPrimary: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type InsuranceCase = {
   id: string;
   tenantId: string;
   clientId: string;
+  bankAccountId: string;
   policyNumber: string;
   insurer: string;
   insuranceType: string;
@@ -77,6 +93,7 @@ export type ClientRecord = {
   updatedAt?: string;
   history: HistoryNote[];
   cases: InsuranceCase[];
+  bankAccounts: ClientBankAccount[];
 };
 
 export type SellerTeamStat = {
