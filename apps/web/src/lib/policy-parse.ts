@@ -531,7 +531,43 @@ function findBankAccount(text: string): ParsedBankAccount | null {
   };
 }
 
+function vigenciaPair(text: string, re: RegExp) {
+  const match = text.match(re);
+  if (!match) return null;
+  const start = toIsoDate(match[1]);
+  const end = toIsoDate(match[2]);
+  if (start && end && end >= start) return { start, end };
+  return null;
+}
+
 function findVigenciaRange(text: string, model: PolicyModel) {
+  if (model === 'bb-certificado') {
+    const individual = vigenciaPair(
+      text,
+      new RegExp(`In[ií]cio e T[ée]rmino individual[\\s\\S]{0,80}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`, 'i')
+    );
+    if (individual) return individual;
+  }
+
+  if (model === 'bradesco-certificado') {
+    const stacked = vigenciaPair(
+      text,
+      new RegExp(`In[ií]cio de Vig[eê]ncia\\s+T[ée]rmino de Vig[eê]ncia\\s+${DATE_BR}\\s+${DATE_BR}`, 'i')
+    );
+    if (stacked) return stacked;
+  }
+
+  if (model === 'bradesco-residencial') {
+    const clock = vigenciaPair(
+      text,
+      new RegExp(
+        `das?\\s+24(?::00|hs?|h(?:oras)?)[\\s\\S]{0,40}?${DATE_BR}[\\s\\S]{0,80}?(?:às|as|at[eé])[\\s\\S]{0,40}?${DATE_BR}`,
+        'i'
+      )
+    );
+    if (clock) return clock;
+  }
+
   if (model === 'bradesco-vida' && /VITALICIA/i.test(text)) {
     const startNearVitalicia = text.match(new RegExp(`${DATE_BR}[\\s\\S]{0,120}?VITALICIA`, 'i'));
     const start = startNearVitalicia?.[1] ? toIsoDate(startNearVitalicia[1]) : null;
@@ -539,29 +575,26 @@ function findVigenciaRange(text: string, model: PolicyModel) {
   }
 
   const pairPatterns = [
-    new RegExp(`In[ií]cio e T[ée]rmino[\\s\\S]{0,120}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`, 'i'),
+    new RegExp(`In[ií]cio e T[ée]rmino(?:\\s+individual)?[\\s\\S]{0,120}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`, 'i'),
+    new RegExp(
+      `In[ií]cio de Vig[eê]ncia\\s+(?:Fim|T[ée]rmino) de Vig[eê]ncia\\s+${DATE_BR}\\s+${DATE_BR}`,
+      'i'
+    ),
+    new RegExp(
+      `das?\\s+24(?::00|hs?|h(?:oras)?)[\\s\\S]{0,40}?${DATE_BR}[\\s\\S]{0,80}?(?:às|as|at[eé])[\\s\\S]{0,40}?${DATE_BR}`,
+      'i'
+    ),
     new RegExp(
       `vig[eê]ncia(?:\\s+do\\s+seguro)?[\\s\\S]{0,60}?${DATE_BR}\\s*(?:a|at[eé]|-|/|at[eé]\\s+as)\\s*${DATE_BR}`,
       'i'
     ),
     new RegExp(`per[ií]odo\\s+de\\s+vig[eê]ncia[\\s\\S]{0,50}?${DATE_BR}[\\s\\S]{0,50}?${DATE_BR}`, 'i'),
-    new RegExp(
-      `das?\\s+24(?::00|h(?:oras)?)?[\\s\\S]{0,50}?${DATE_BR}[\\s\\S]{0,100}?(?:at[eé]|às|as)[\\s\\S]{0,50}?${DATE_BR}`,
-      'i'
-    ),
     new RegExp(`\\bde\\s+${DATE_BR}\\s+at[eé]\\s+${DATE_BR}`, 'i'),
-    new RegExp(
-      `In[ií]cio de Vig[eê]ncia[\\s\\S]{0,40}(?:Fim|T[ée]rmino) de Vig[eê]ncia[\\s\\S]{0,140}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`,
-      'i'
-    ),
   ];
 
   for (const re of pairPatterns) {
-    const match = text.match(re);
-    if (!match) continue;
-    const start = toIsoDate(match[1]);
-    const end = toIsoDate(match[2]);
-    if (start && end && end >= start) return { start, end };
+    const pair = vigenciaPair(text, re);
+    if (pair) return pair;
   }
 
   const startMatch =
