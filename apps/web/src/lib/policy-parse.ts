@@ -54,7 +54,36 @@ export const POLICY_FIELD_LABELS: Record<keyof ParsedPolicy, string> = {
 const COMPANY_CEP = new Set(['01310917', '06029900', '06472900', '01310900']);
 const CALL_CENTER = /^(0800|4004|3003|0800701|7279966)/;
 const NAME_NOISE =
-  /BRADESCO|SEGURO|CERTIFICADO|PREVID[EÊ]NCIA|COMPANHIA|AP[OÓ]LICE|SUSEP|CORRETORA|ESTIPULANTE|COSSEGURO|P[AÁ]GINA|DADOS DO|LOGRADOURO|ENDERE[CÇ]O/i;
+  /BRADESCO|SEGURO|CERTIFICADO|PREVID[EÊ]NCIA|COMPANHIA|AP[OÓ]LICE|SUSEP|CORRETORA|ESTIPULANTE|COSSEGURO|P[AÁ]GINA|DADOS DO|LOGRADOURO|ENDERE[CÇ]O|CONSIGNADO|P[UÚ]BLICO|TELEFONE|NASCIMENTO/i;
+const NAME_LINE_SKIP =
+  /^(SEXO|FEMININO|MASCULINO|ESTADO CIVIL|SOLTEIRO|CASADO|VI[UÚ]VO|DIVORCIADO|UNI[AÃ]O EST[AÁ]VEL|CPF\/?CNPJ|DATA DE NASCIMENTO|TELEFONE|ENDERE[CÇ]O|BAIRRO|CIDADE|ESTADO|CEP|NOME DO SEGURADO|TIPO DE PESSOA|F[IÍ]SICA|JUR[IÍ]DICA|ESTIPULANTE|CREDOR|UF TELEFONE|DDD|COMPLEMENTO|N[UÚ]MERO)\b/i;
+const FIELD_LABEL_NAME =
+  /^(Data|Uf|Tipo|Cpf|Ddd|Cep|Sexo|Telefone|Nascimento|Nome)\b/i;
+
+type PolicyModel =
+  | 'bb-certificado'
+  | 'bradesco-certificado'
+  | 'bradesco-vida'
+  | 'bradesco-residencial'
+  | 'generic';
+
+function detectPolicyModel(text: string): PolicyModel {
+  // Layouts de referência (pasta local Modelo_Apolices/, fora do git):
+  // APO_BB.pdf · Apolice_residencial.pdf · Apolice_vida.pdf ·
+  // certificado-39.pdf / Apolice_Prestamista.pdf
+  if (
+    /CERTIFICADO INDIVIDUAL DE CONTRATA[CÇ][AÃ]O/i.test(text) ||
+    (/DADOS DO SEGURADO/i.test(text) && /BRASILSEG|BANCO DO BRASIL S\.A/i.test(text))
+  ) {
+    return 'bb-certificado';
+  }
+  if (/RESIDENCIAL/i.test(text) && /Bradesco/i.test(text)) return 'bradesco-residencial';
+  if (/VIDA INTEIRA/i.test(text) && /BRADESCO VIDA/i.test(text)) return 'bradesco-vida';
+  if (/Certificado de Seguro/i.test(text) && /Bradesco Vida e Previd/i.test(text)) {
+    return 'bradesco-certificado';
+  }
+  return 'generic';
+}
 const ADDRESS_PREFIX =
   /^(RUA|R\.|AVENIDA|AV\.?|ALAMEDA|AL\.|TRAVESSA|TV\.|PRA[CÇ]A|P[CÇ]\.?|RODOVIA|ROD\.|ESTRADA|EST\.|LARGO|VIELA|BECO|S[IÍ]TIO|FAZENDA|CONDOM[IÍ]NIO|COND\.|BLOCO|QUADRA|QD\.|LOTE|LT\.|LOGRADOURO|ENDERE[CÇ]O|COMPLEMENTO|BAIRRO|DISTRITO|SETOR|CH[AÁ]CARA|N[UÚ]MERO)\b/i;
 const DATE_BR = '(\\d{2}[/.-]\\d{2}[/.-]\\d{4})';
@@ -107,7 +136,7 @@ function acceptPersonName(raw: string | null | undefined) {
   if (!raw) return null;
   if (isAddressLikeName(raw)) return null;
   const named = titleCaseName(raw);
-  if (!named || isAddressLikeName(named)) return null;
+  if (!named || isAddressLikeName(named) || FIELD_LABEL_NAME.test(named)) return null;
   return named;
 }
 
@@ -172,15 +201,80 @@ function toIsoDate(hit: string) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-function findName(text: string, cpf: string | null) {
-  if (cpf) {
-    const masked = cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
-    const beside = text.match(
-      new RegExp(`([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})\\s+${masked.replace(/[.*]/g, '\\$&')}`)
-    );
-    const fromCpf = acceptPersonName(beside?.[1]);
-    if (fromCpf) return fromCpf;
+function findNameNearCpf(text: string, cpf: string | null) {
+  if (!cpf) return null;
+  const masked = cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+  let at = text.indexOf(masked);
+  if (at < 0) {
+    const loose = text.search(new RegExp(cpf.split('').join('[.\\-\\s]?')));
+    at = loose;
   }
+  if (at < 0) return null;
+
+  const beside = text
+    .slice(Math.max(0, at - 90), at)
+    .match(/([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{6,80})\s*$/);
+  const fromBeside = acceptPersonName(beside?.[1]);
+  if (fromBeside) return fromBeside;
+
+  const lines = text
+    .slice(Math.max(0, at - 400), at)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (NAME_LINE_SKIP.test(line)) continue;
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(line)) continue;
+    if (digitsOnly(line).length >= 10) continue;
+    const person = acceptPersonName(line);
+    if (person) return person;
+  }
+  return null;
+}
+
+function findBbSeguradoName(text: string) {
+  const block = insuredBlock(text) || text;
+  const named = block.match(
+    /Nome:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80}?)(?:\s+Tipo de pessoa)/i
+  );
+  return acceptPersonName(named?.[1]);
+}
+
+function findName(text: string, cpf: string | null, model: PolicyModel) {
+  if (model === 'bb-certificado') {
+    const fromBb = findBbSeguradoName(text);
+    if (fromBb) return fromBb;
+  }
+
+  if (model === 'bradesco-residencial') {
+    const prezado = acceptPersonName(
+      text.match(/Prezado\(a\)\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80}?)\s*,/i)?.[1]
+    );
+    if (prezado) return prezado;
+    const stacked = acceptPersonName(
+      text.match(/Dados do Segurado\s*\n\s*Nome\s*\n\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i)?.[1]
+    );
+    if (stacked) return stacked;
+  }
+
+  if (model === 'bradesco-vida') {
+    const caro = acceptPersonName(
+      text.match(/Caro\s*\(?\s*a\s*\)?\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i)?.[1]
+    );
+    if (caro) return caro;
+  }
+
+  if (model === 'bradesco-certificado') {
+    const near = findNameNearCpf(text, cpf);
+    if (near) return near;
+  }
+
+  const fromBb = findBbSeguradoName(text);
+  if (fromBb) return fromBb;
+
+  const fromCpf = findNameNearCpf(text, cpf);
+  if (fromCpf) return fromCpf;
 
   const block = insuredBlock(text);
   const named = block.match(
@@ -203,18 +297,32 @@ function findName(text: string, cpf: string | null) {
   const fromDados = acceptPersonName(dados?.[1]);
   if (fromDados) return fromDados;
 
+  const afterSegurado = text.match(
+    /Nome do Segurado(?:\s+Telefone)?(?:\s+CPF\/?CNPJ)?\s*\n+\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{6,80})/i
+  );
+  const fromAfterLabel = acceptPersonName(afterSegurado?.[1]);
+  if (fromAfterLabel) return fromAfterLabel;
+
   const lines = text.split('\n').slice(0, 90);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!/^[A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{10,80}$/.test(trimmed)) continue;
-    if (trimmed.split(/\s+/).length < 3) continue;
+  for (let i = 0; i < lines.length; i += 1) {
+    const trimmed = lines[i].trim();
+    if (!/^[A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{6,80}$/.test(trimmed)) continue;
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    if (words.length < 2) continue;
+    const prev = (lines[i - 1] || '').trim();
+    if (/^(Cidade|Bairro|Endere[cç]o|Estipulante|Credor)$/i.test(prev)) continue;
     const person = acceptPersonName(trimmed);
     if (person) return person;
   }
   return null;
 }
 
-function findPolicyNumber(text: string) {
+function findPolicyNumber(text: string, model: PolicyModel) {
+  if (model === 'bradesco-certificado') {
+    const sucursalApolice = text.match(/Ap[oó]liceSucursal\s*\n\s*\d+\s+(\d{5,12})/i);
+    if (sucursalApolice) return sucursalApolice[1];
+  }
+
   const bbApolice = text.match(/N[ºo°]?\s*Ap[oó]lice:\s*(\d{4,12})/i);
   if (bbApolice) return bbApolice[1];
 
@@ -354,7 +462,9 @@ function findInsurer(text: string) {
 }
 
 function findType(text: string) {
-  if (/prestamista|cr[eé]dito protegido|cr[eé]dito pessoal|credito pessoal/i.test(text)) return 'Prestamista';
+  if (/prestamista|cr[eé]dito protegido|cr[eé]dito pessoal|credito pessoal|consignado/i.test(text)) {
+    return 'Prestamista';
+  }
   if (/residencial|compreensivo residencial/i.test(text)) return 'Residencial';
   if (/vida inteira|seguro vida/i.test(text)) return 'Vida';
   if (/\bVIDA\b/.test(text) && /BRADESCO VIDA/i.test(text)) return 'Vida';
@@ -421,7 +531,13 @@ function findBankAccount(text: string): ParsedBankAccount | null {
   };
 }
 
-function findVigenciaRange(text: string) {
+function findVigenciaRange(text: string, model: PolicyModel) {
+  if (model === 'bradesco-vida' && /VITALICIA/i.test(text)) {
+    const startNearVitalicia = text.match(new RegExp(`${DATE_BR}[\\s\\S]{0,120}?VITALICIA`, 'i'));
+    const start = startNearVitalicia?.[1] ? toIsoDate(startNearVitalicia[1]) : null;
+    return { start, end: null as string | null };
+  }
+
   const pairPatterns = [
     new RegExp(`In[ií]cio e T[ée]rmino[\\s\\S]{0,120}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`, 'i'),
     new RegExp(
@@ -508,18 +624,19 @@ export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
     };
   }
 
+  const model = detectPolicyModel(text);
   const cpf = findPersonCpf(text);
   const { city, uf } = findCityUf(text);
-  const vigencia = findVigenciaRange(text);
+  const vigencia = findVigenciaRange(text, model);
   const fields: ParsedPolicy = {
-    name: findName(text, cpf),
+    name: findName(text, cpf, model),
     cpf,
     phone: findPhone(text),
     email: findEmail(text),
     city,
     uf,
     cep: findCep(text),
-    policyNumber: findPolicyNumber(text),
+    policyNumber: findPolicyNumber(text, model),
     insurer: findInsurer(text),
     insuranceType: findType(text),
     insuranceValue: findValue(text),
