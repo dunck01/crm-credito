@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { isAdminRole } from '@/lib/constants';
 import type { TenantUser } from '@/lib/types';
-import { Users, X, UserPlus, Shield, User, Trash2, Edit2, AlertTriangle } from 'lucide-react';
+import { Users, X, UserPlus, Shield, User, Trash2, Edit2, AlertTriangle, Eye } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import { ModalOverlay } from './ModalOverlay';
+import { TeamMemberView } from './TeamMemberView';
 
 type Props = {
   users: TenantUser[];
@@ -25,6 +26,7 @@ export function TeamModal({ users, currentUserRole, onClose, onChanged }: Props)
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [pendingRemove, setPendingRemove] = useState<TenantUser | null>(null);
+  const [viewing, setViewing] = useState<TenantUser | null>(null);
 
   const reset = () => {
     setName('');
@@ -184,6 +186,18 @@ export function TeamModal({ users, currentUserRole, onClose, onChanged }: Props)
                 </div>
 
                 <div className="flex gap-1.5 ml-auto">
+                  {isSupervisor && (
+                    <button
+                      className="btn btn-ghost btn-small"
+                      type="button"
+                      onClick={() => setViewing(u)}
+                      aria-label={`Visualizar carteira de ${u.name}`}
+                      title={`Visualizar carteira de ${u.name}`}
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span className="hidden sm:inline">Visualizar</span>
+                    </button>
+                  )}
                   <button
                     className="btn btn-ghost btn-small"
                     type="button"
@@ -216,6 +230,7 @@ export function TeamModal({ users, currentUserRole, onClose, onChanged }: Props)
         </div>
       </div>
     </ModalOverlay>
+      {viewing && <TeamMemberView member={viewing} onClose={() => setViewing(null)} />}
       {pendingRemove && (
         <ConfirmDialog
           title="Remover membro?"

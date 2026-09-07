@@ -480,6 +480,73 @@ body.light-mode .btn {
 }
 
 /* Operational Rails (Board & Columns) */
+.board-scrollbar-wrap {
+  margin: 0 0 10px;
+  padding: 8px 10px 7px;
+  background: var(--card-glass);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+}
+
+.board-scrollbar-caption {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 5px;
+  color: var(--ink-soft);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.35px;
+  text-transform: uppercase;
+}
+
+.board-scrollbar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  color: var(--accent-teal);
+  background: var(--paper-elevated);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.board-scrollbar-top {
+  height: 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: var(--accent-teal) var(--paper);
+  scrollbar-width: auto;
+}
+
+.board-scrollbar-top > div {
+  height: 1px;
+}
+
+.board-scrollbar-top::-webkit-scrollbar {
+  height: 9px;
+}
+
+.board-scrollbar-top::-webkit-scrollbar-track {
+  background: var(--paper);
+  border-radius: 999px;
+}
+
+.board-scrollbar-top::-webkit-scrollbar-thumb {
+  background: var(--accent-teal);
+  border: 2px solid var(--paper);
+  border-radius: 999px;
+}
+
+.board-scrollbar-top::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-lime);
+}
+
 .board {
   display: flex;
   gap: 14px;

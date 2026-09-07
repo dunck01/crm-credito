@@ -3,15 +3,24 @@ import { prisma } from '@crm-credito/database';
 import { decimalNumber } from '@/lib/format';
 import { canSeeTeamAggregates, requireTenantUser } from '@/lib/session';
 
-export async function GET() {
+export async function GET(req: Request) {
   const user = await requireTenantUser();
   if (!user) return NextResponse.json({ error: 'Não autorizado.' }, { status: 401 });
   if (user.role !== 'SUPERVISOR' || !canSeeTeamAggregates(user.role)) {
     return NextResponse.json({ error: 'Acesso negado.' }, { status: 403 });
   }
 
+  const memberId = new URL(req.url).searchParams.get('userId');
+  if (!memberId) {
+    return NextResponse.json({ error: 'Membro não informado.' }, { status: 400 });
+  }
+
   const clients = await prisma.client.findMany({
-    where: { tenantId: user.tenantId, isArchived: false, assignedUser: { supervisorId: user.id } },
+    where: {
+      tenantId: user.tenantId,
+      isArchived: false,
+      assignedUser: { id: memberId, supervisorId: user.id },
+    },
     select: {
       id: true,
       name: true,

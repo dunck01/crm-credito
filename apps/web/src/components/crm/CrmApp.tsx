@@ -445,7 +445,6 @@ export function CrmApp() {
           clients={listClients}
           isAdmin={isAdmin}
           canSeeTeam={canViewTeam}
-          canSeeTeamContacts={isSupervisor}
           onOrphansClaimed={fetchAll}
         />
       )}

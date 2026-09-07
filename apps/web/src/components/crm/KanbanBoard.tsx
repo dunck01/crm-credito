@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { CASE_STAGES, CONTACT_COLUMNS, type CaseStatusKey } from '@/lib/constants';
 import { fmtDateShort, fmtMoney, formatPhone, whatsappLink } from '@/lib/format';
 import type { ClientRecord, InsuranceCase } from '@/lib/types';
@@ -30,9 +31,50 @@ export function KanbanBoard({
   onOpen,
   onAdd,
 }: Props) {
+  const boardRef = useRef<HTMLDivElement>(null);
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const [boardScrollWidth, setBoardScrollWidth] = useState(0);
+
+  useEffect(() => {
+    const board = boardRef.current;
+    if (!board) return;
+
+    const updateScrollWidth = () => setBoardScrollWidth(board.scrollWidth);
+    updateScrollWidth();
+    window.addEventListener('resize', updateScrollWidth);
+    return () => window.removeEventListener('resize', updateScrollWidth);
+  }, [cardsByStatus]);
+
+  const syncScroll = (source: HTMLDivElement) => {
+    const target = source === topScrollRef.current ? boardRef.current : topScrollRef.current;
+    if (target && target.scrollLeft !== source.scrollLeft) {
+      target.scrollLeft = source.scrollLeft;
+    }
+  };
+
   return (
-    <div className="board">
-      {CASE_STAGES.map((stage) => {
+    <>
+      <div className="board-scrollbar-wrap">
+        <div className="board-scrollbar-caption">
+          <span className="board-scrollbar-icon" aria-hidden="true">↔</span>
+          <span>Arraste para navegar pelas colunas</span>
+        </div>
+        <div
+          ref={topScrollRef}
+          className="board-scrollbar-top"
+          onScroll={(event) => syncScroll(event.currentTarget)}
+          aria-label="Rolar funil horizontalmente"
+        >
+          <div style={{ width: `${boardScrollWidth}px` }} />
+        </div>
+      </div>
+
+      <div
+        ref={boardRef}
+        className="board"
+        onScroll={(event) => syncScroll(event.currentTarget)}
+      >
+        {CASE_STAGES.map((stage) => {
         const cards = cardsByStatus[stage.key] || [];
         const total = cards.reduce((acc, c) => acc + (c.caseItem.insuranceValue || 0), 0);
         return (
@@ -170,7 +212,8 @@ export function KanbanBoard({
             )}
           </div>
         );
-      })}
-    </div>
+        })}
+      </div>
+    </>
   );
 }

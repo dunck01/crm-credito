@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CASE_STAGES, stageByKey } from '@/lib/constants';
-import { fmtDateShort, fmtMoney, formatPhone, whatsappLink } from '@/lib/format';
-import type { ClientRecord, SellerTeamStat, TeamClientView, TenantStatsPayload } from '@/lib/types';
+import { CASE_STAGES } from '@/lib/constants';
+import { fmtMoney } from '@/lib/format';
+import type { ClientRecord, SellerTeamStat, TenantStatsPayload } from '@/lib/types';
 import {
   TrendingUp,
   DollarSign,
@@ -19,7 +19,6 @@ type Props = {
   clients: ClientRecord[];
   isAdmin?: boolean;
   canSeeTeam?: boolean;
-  canSeeTeamContacts?: boolean;
   onOrphansClaimed?: () => void;
 };
 
@@ -34,9 +33,8 @@ function parseTeamStats(data: TenantStatsPayload | SellerTeamStat[] | null): {
   return { team: [], orphanClientsCount: 0 };
 }
 
-export function DashboardView({ clients, isAdmin, canSeeTeam, canSeeTeamContacts, onOrphansClaimed }: Props) {
+export function DashboardView({ clients, isAdmin, canSeeTeam, onOrphansClaimed }: Props) {
   const [teamStats, setTeamStats] = useState<SellerTeamStat[]>([]);
-  const [teamClients, setTeamClients] = useState<TeamClientView[]>([]);
   const [orphanClientsCount, setOrphanClientsCount] = useState(0);
   const [loadingTeam, setLoadingTeam] = useState(false);
   const [claiming, setClaiming] = useState(false);
@@ -44,21 +42,16 @@ export function DashboardView({ clients, isAdmin, canSeeTeam, canSeeTeamContacts
   const loadTeam = useCallback(() => {
     if (!canSeeTeam) return;
     setLoadingTeam(true);
-    Promise.all([
-      fetch('/api/tenant/stats'),
-      canSeeTeamContacts ? fetch('/api/tenant/team/clients') : Promise.resolve(null),
-    ])
-      .then(async ([statsRes, clientsRes]) => {
+    fetch('/api/tenant/stats')
+      .then(async (statsRes) => {
         const statsData = statsRes.ok ? await statsRes.json() : null;
-        const clientsData = clientsRes?.ok ? await clientsRes.json() : [];
         const parsed = parseTeamStats(statsData);
         setTeamStats(parsed.team);
         setOrphanClientsCount(parsed.orphanClientsCount);
-        setTeamClients(Array.isArray(clientsData) ? clientsData : []);
       })
       .catch((err) => console.error(err))
       .finally(() => setLoadingTeam(false));
-  }, [canSeeTeam, canSeeTeamContacts]);
+  }, [canSeeTeam]);
 
   useEffect(() => {
     loadTeam();
@@ -387,69 +380,6 @@ export function DashboardView({ clients, isAdmin, canSeeTeam, canSeeTeamContacts
         </div>
       )}
 
-      {canSeeTeamContacts && (
-        <div className="bg-[var(--card-glass)] backdrop-blur-md border border-[var(--line-strong)] rounded-2xl p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-[var(--line)] flex-wrap gap-2">
-            <div>
-              <div className="flex items-center gap-2">
-                <Users className="w-4 h-4 text-[var(--c-primeiro)]" />
-                <h3 className="font-display text-base sm:text-lg font-bold m-0 text-[var(--ink)]">
-                  Contatos da equipe
-                </h3>
-              </div>
-              <p className="text-xs text-[var(--ink-soft)] m-0 mt-0.5">
-                Visualização somente leitura · nenhuma ação altera carteira ou funil
-              </p>
-            </div>
-            <span className="font-mono text-xs font-semibold px-2.5 py-1 rounded-full bg-[var(--paper)] border border-[var(--line-strong)] text-[var(--ink-soft)]">
-              {teamClients.length} contato{teamClients.length === 1 ? '' : 's'}
-            </span>
-          </div>
-
-          {loadingTeam ? (
-            <p className="font-mono text-xs text-[var(--ink-soft)] py-4 text-center">Carregando contatos...</p>
-          ) : teamClients.length === 0 ? (
-            <p className="font-mono text-xs text-[var(--ink-muted)] py-4 text-center">Nenhum contato ativo na equipe.</p>
-          ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2.5">
-              {teamClients.map((client) => {
-                const currentCase = client.cases[0];
-                const totalValue = client.cases.reduce((sum, item) => sum + (item.insuranceValue || 0), 0);
-                return (
-                  <div key={client.id} className="rounded-xl border border-[var(--line)] bg-[var(--paper)] p-3.5">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="font-bold text-sm text-[var(--ink)] truncate">{client.name}</div>
-                        <div className="text-[11px] text-[var(--ink-soft)] mt-0.5">
-                          Responsável: {client.assignedUser?.name || 'Sem responsável'}
-                        </div>
-                      </div>
-                      <div className="font-mono text-xs font-bold text-[var(--accent-lime)] tabular-nums shrink-0">
-                        {fmtMoney(totalValue) || 'R$ 0,00'}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 mt-2 text-xs text-[var(--ink-soft)]">
-                      {client.phone && (
-                        <a className="font-mono hover:text-[var(--accent-teal)]" href={whatsappLink(client.phone)} target="_blank" rel="noreferrer">
-                          {formatPhone(client.phone)}
-                        </a>
-                      )}
-                      {client.email && <span className="truncate">{client.email}</span>}
-                      {client.city && <span>{[client.city, client.uf].filter(Boolean).join('/')}</span>}
-                    </div>
-                    <div className="flex items-center justify-between gap-2 mt-2 pt-2 border-t border-[var(--line)] text-[11px]">
-                      <span className="segment-tag">{currentCase ? stageByKey(currentCase.status).title : 'Sem caso'}</span>
-                      <span className="text-[var(--ink-muted)]">
-                        {client.taskDate ? `Retorno ${fmtDateShort(client.taskDate)}` : 'Sem retorno agendado'}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
