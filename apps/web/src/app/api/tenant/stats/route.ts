@@ -13,14 +13,18 @@ export async function GET() {
 
   // Load team members in this tenant
   const members = await prisma.user.findMany({
-    where: { tenantId: user.tenantId },
+    where: user.role === 'SUPERVISOR'
+      ? { tenantId: user.tenantId, supervisorId: user.id }
+      : { tenantId: user.tenantId },
     select: { id: true, name: true },
     orderBy: { name: 'asc' },
   });
 
   // Query only aggregated fields for active clients - strictly NO client PII or IDs
   const clients = await prisma.client.findMany({
-    where: { tenantId: user.tenantId, isArchived: false },
+    where: user.role === 'SUPERVISOR'
+      ? { tenantId: user.tenantId, isArchived: false, assignedUser: { supervisorId: user.id } }
+      : { tenantId: user.tenantId, isArchived: false },
     select: {
       assignedUserId: true,
       doNotContact: true,
@@ -86,9 +90,11 @@ export async function GET() {
     }
   }
 
-  const orphanClientsCount = await prisma.client.count({
-    where: { tenantId: user.tenantId, assignedUserId: null },
-  });
+  const orphanClientsCount = user.role === 'SUPERVISOR'
+    ? 0
+    : await prisma.client.count({
+        where: { tenantId: user.tenantId, assignedUserId: null },
+      });
 
   return NextResponse.json({
     team: Array.from(statsMap.values()),

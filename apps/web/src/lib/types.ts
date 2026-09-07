@@ -5,6 +5,8 @@ export type TenantUser = {
   name: string;
   email: string;
   role: string;
+  supervisorId?: string | null;
+  supervisorName?: string | null;
   createdAt?: string;
 };
 
@@ -114,3 +116,24 @@ export type TenantStatsPayload = {
   orphanClientsCount: number;
 };
 
+export type TeamClientView = {
+  id: string;
+  name: string;
+  cpf: string;
+  phone: string;
+  email: string;
+  city: string;
+  uf: string;
+  doNotContact: boolean;
+  taskDate: string;
+  taskTime: string;
+  assignedUser: { id: string; name: string } | null;
+  cases: Array<{
+    id: string;
+    policyNumber: string;
+    insurer: string;
+    insuranceType: string;
+    status: string;
+    insuranceValue: number | null;
+  }>;
+};

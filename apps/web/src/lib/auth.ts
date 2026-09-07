@@ -48,9 +48,10 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           name: user.name,
           email: user.email,
-          role: user.role,
-          tenantId: user.tenantId,
-          tenantName: user.tenant?.name,
+           role: user.role,
+           tenantId: user.tenantId,
+           tenantName: user.tenant?.name,
+           supervisorId: user.supervisorId,
         };
       },
     }),
@@ -62,9 +63,33 @@ export const authOptions: NextAuthOptions = {
         token.role = (user as { role?: string }).role;
         token.tenantId = (user as { tenantId?: string | null }).tenantId;
         token.tenantName = (user as { tenantName?: string }).tenantName;
+        token.supervisorId = (user as { supervisorId?: string | null }).supervisorId;
       }
       if (!token.id && token.sub) {
         token.id = token.sub;
+      }
+      if (token.id) {
+        const current = await prisma.user.findUnique({
+          where: { id: token.id },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            tenantId: true,
+            supervisorId: true,
+            tenant: { select: { name: true } },
+          },
+        });
+        if (current) {
+          token.id = current.id;
+          token.name = current.name;
+          token.email = current.email;
+          token.role = current.role;
+          token.tenantId = current.tenantId;
+          token.supervisorId = current.supervisorId;
+          token.tenantName = current.tenant?.name;
+        }
       }
       return token;
     },
@@ -75,11 +100,13 @@ export const authOptions: NextAuthOptions = {
           role?: unknown;
           tenantId?: unknown;
           tenantName?: unknown;
+          supervisorId?: unknown;
         };
         u.id = (token.id as string) || token.sub;
         u.role = token.role;
         u.tenantId = token.tenantId;
         u.tenantName = token.tenantName;
+        u.supervisorId = token.supervisorId;
       }
       return session;
     },

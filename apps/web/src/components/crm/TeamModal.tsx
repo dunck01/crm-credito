@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { isAdminRole } from '@/lib/constants';
 import type { TenantUser } from '@/lib/types';
 import { Users, X, UserPlus, Shield, User, Trash2, Edit2, AlertTriangle } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -6,15 +7,20 @@ import { ModalOverlay } from './ModalOverlay';
 
 type Props = {
   users: TenantUser[];
+  currentUserRole: string;
   onClose: () => void;
   onChanged: () => void;
 };
 
-export function TeamModal({ users, onClose, onChanged }: Props) {
+type ManagedRole = 'TENANT_USER' | 'TENANT_ADMIN' | 'SUPERVISOR';
+
+export function TeamModal({ users, currentUserRole, onClose, onChanged }: Props) {
+  const isAdmin = isAdminRole(currentUserRole);
+  const isSupervisor = currentUserRole === 'SUPERVISOR';
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'TENANT_USER' | 'TENANT_ADMIN'>('TENANT_USER');
+  const [role, setRole] = useState<ManagedRole>('TENANT_USER');
   const [editing, setEditing] = useState<TenantUser | null>(null);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -109,9 +115,14 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
               </div>
               <div className="field">
                 <label>Nível de Acesso</label>
-                <select value={role} onChange={(e) => setRole(e.target.value as 'TENANT_USER' | 'TENANT_ADMIN')}>
+                <select
+                  value={role}
+                  disabled={isSupervisor}
+                  onChange={(e) => setRole(e.target.value as ManagedRole)}
+                >
                   <option value="TENANT_USER">Operador de Crédito</option>
-                  <option value="TENANT_ADMIN">Administrador da Mesa</option>
+                  {isAdmin && <option value="SUPERVISOR">Supervisor</option>}
+                  {isAdmin && <option value="TENANT_ADMIN">Administrador da Mesa</option>}
                 </select>
               </div>
             </div>
@@ -158,12 +169,17 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
                       <span className={`font-mono text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
                         u.role === 'TENANT_ADMIN'
                           ? 'bg-[var(--c-primeiro-bg)] text-[var(--c-primeiro)] border-[var(--c-primeiro)]'
+                          : u.role === 'SUPERVISOR'
+                          ? 'bg-[var(--c-recompra-bg)] text-[var(--c-recompra)] border-[var(--c-recompra)]'
                           : 'bg-[var(--c-followup-bg)] text-[var(--c-followup)] border-[var(--c-followup)]'
                       }`}>
-                        {u.role === 'TENANT_ADMIN' ? 'Administrador' : 'Operador'}
+                        {u.role === 'TENANT_ADMIN' ? 'Administrador' : u.role === 'SUPERVISOR' ? 'Supervisor' : 'Operador'}
                       </span>
-                    </div>
+                     </div>
                     <div className="font-mono text-xs text-[var(--ink-soft)] mt-0.5">{u.email}</div>
+                    {u.supervisorName && (
+                      <div className="text-[11px] text-[var(--ink-muted)] mt-0.5">Supervisor: {u.supervisorName}</div>
+                    )}
                   </div>
                 </div>
 
@@ -175,15 +191,17 @@ export function TeamModal({ users, onClose, onChanged }: Props) {
                       setEditing(u);
                       setName(u.name);
                       setEmail(u.email);
-                      setRole(u.role === 'TENANT_ADMIN' ? 'TENANT_ADMIN' : 'TENANT_USER');
+                      setRole(u.role === 'TENANT_ADMIN' || u.role === 'SUPERVISOR' ? u.role : 'TENANT_USER');
                       setPassword('');
                     }}
                   >
                     <Edit2 className="w-3 h-3" /> Editar
                   </button>
-                  <button className="btn btn-danger btn-small" type="button" onClick={() => setPendingRemove(u)}>
-                    <Trash2 className="w-3 h-3" /> Remover
-                  </button>
+                  {isAdmin && (
+                    <button className="btn btn-danger btn-small" type="button" onClick={() => setPendingRemove(u)}>
+                      <Trash2 className="w-3 h-3" /> Remover
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

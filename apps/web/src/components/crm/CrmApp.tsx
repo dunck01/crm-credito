@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import { CalendarDays, Columns3, LayoutDashboard, LogOut, Moon, Plus, Search, Sun, Table2, Users } from 'lucide-react';
-import { CASE_STAGES, CONTACT_COLUMNS, isAdminRole, type CaseStatusKey } from '@/lib/constants';
+import { CASE_STAGES, CONTACT_COLUMNS, isAdminRole, isSupervisorRole, type CaseStatusKey } from '@/lib/constants';
 import { digitsOnly, normalizeSearch, todayStr } from '@/lib/format';
 import type { ClientRecord, TenantUser } from '@/lib/types';
 import { AgendaView } from './AgendaView';
@@ -47,6 +47,8 @@ export function CrmApp() {
     tenantName?: string;
   };
   const isAdmin = isAdminRole(user?.role);
+  const isSupervisor = isSupervisorRole(user?.role);
+  const canViewTeam = isAdmin || isSupervisor;
   const tenantName = user?.tenantName || 'CRM Restituição';
 
   const [clients, setClients] = useState<ClientRecord[]>([]);
@@ -74,7 +76,7 @@ export function CrmApp() {
   const fetchAll = useCallback(async () => {
     try {
       const promises: Promise<Response>[] = [fetch('/api/clients?archived=false')];
-      if (isAdmin) {
+      if (canViewTeam) {
         promises.push(fetch('/api/tenant/users'));
       }
       const [cRes, uRes] = await Promise.all(promises);
@@ -85,7 +87,7 @@ export function CrmApp() {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, [canViewTeam]);
 
   useEffect(() => {
     fetchAll();
@@ -300,7 +302,7 @@ export function CrmApp() {
                 ? 'bg-[var(--c-primeiro-bg)] text-[var(--c-primeiro)] border-[var(--c-primeiro)]'
                 : 'bg-[var(--c-followup-bg)] text-[var(--c-followup)] border-[var(--c-followup)]'
             }`}>
-              {isAdmin ? 'Administrador' : 'Operador'}
+              {isAdmin ? 'Administrador' : isSupervisor ? 'Supervisor' : 'Operador'}
             </span>
           </div>
         </div>
@@ -319,7 +321,7 @@ export function CrmApp() {
               <LayoutDashboard className="w-3.5 h-3.5" /> Números
             </button>
           </div>
-          {isAdmin && (
+          {canViewTeam && (
             <button className="btn btn-ghost" type="button" onClick={() => setTeamOpen(true)}>
               <Users className="w-4 h-4" /> <span className="btn-label">Equipe</span>
             </button>
@@ -442,6 +444,8 @@ export function CrmApp() {
         <DashboardView
           clients={listClients}
           isAdmin={isAdmin}
+          canSeeTeam={canViewTeam}
+          canSeeTeamContacts={isSupervisor}
           onOrphansClaimed={fetchAll}
         />
       )}
@@ -468,6 +472,7 @@ export function CrmApp() {
       {teamOpen && (
         <TeamModal
           users={users}
+          currentUserRole={user?.role || ''}
           onClose={() => setTeamOpen(false)}
           onChanged={fetchAll}
         />

@@ -87,8 +87,14 @@ export function isAdminRole(role?: string | null) {
   return role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN';
 }
 
-export function parseMemberRole(role?: string | null): 'TENANT_ADMIN' | 'TENANT_USER' {
-  return role === 'TENANT_ADMIN' ? 'TENANT_ADMIN' : 'TENANT_USER';
+export function isSupervisorRole(role?: string | null) {
+  return role === 'SUPERVISOR';
+}
+
+export function parseMemberRole(role?: string | null): 'TENANT_ADMIN' | 'SUPERVISOR' | 'TENANT_USER' {
+  if (role === 'TENANT_ADMIN') return 'TENANT_ADMIN';
+  if (role === 'SUPERVISOR') return 'SUPERVISOR';
+  return 'TENANT_USER';
 }
 
 export function stageByKey(key: string) {

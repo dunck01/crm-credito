@@ -1,4 +1,5 @@
 import { getServerSession } from 'next-auth';
+import { prisma } from '@crm-credito/database';
 import { authOptions } from './auth';
 
 export type AuthUser = {
@@ -20,7 +21,25 @@ export async function requireSession() {
 export async function requireTenantUser() {
   const user = await requireSession();
   if (!user?.tenantId) return null;
-  return { ...user, tenantId: user.tenantId };
+  const current = await prisma.user.findFirst({
+    where: { id: user.id, tenantId: user.tenantId },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      tenantId: true,
+      supervisorId: true,
+      tenant: { select: { name: true } },
+    },
+  });
+  if (!current?.tenantId) return null;
+  return {
+    ...user,
+    ...current,
+    tenantId: current.tenantId,
+    tenantName: current.tenant?.name,
+  };
 }
 
 export function ownsClient(
@@ -34,7 +53,14 @@ export function canManageTeam(role?: string | null) {
   return role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN';
 }
 
-export function canSeeTeamAggregates(role?: string | null) {
-  return canManageTeam(role);
+export function canManageTeamUsers(role?: string | null) {
+  return canManageTeam(role) || role === 'SUPERVISOR';
 }
 
+export function canGrantSupervisor(role?: string | null) {
+  return role === 'TENANT_ADMIN' || role === 'SUPER_ADMIN';
+}
+
+export function canSeeTeamAggregates(role?: string | null) {
+  return canManageTeamUsers(role);
+}
