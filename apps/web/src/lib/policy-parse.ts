@@ -54,7 +54,10 @@ export const POLICY_FIELD_LABELS: Record<keyof ParsedPolicy, string> = {
 const COMPANY_CEP = new Set(['01310917', '06029900', '06472900', '01310900']);
 const CALL_CENTER = /^(0800|4004|3003|0800701|7279966)/;
 const NAME_NOISE =
-  /BRADESCO|SEGURO|CERTIFICADO|PREVID[EÊ]NCIA|COMPANHIA|AP[OÓ]LICE|SUSEP|CORRETORA|ESTIPULANTE|COSSEGURO|P[AÁ]GINA/i;
+  /BRADESCO|SEGURO|CERTIFICADO|PREVID[EÊ]NCIA|COMPANHIA|AP[OÓ]LICE|SUSEP|CORRETORA|ESTIPULANTE|COSSEGURO|P[AÁ]GINA|DADOS DO|LOGRADOURO|ENDERE[CÇ]O/i;
+const ADDRESS_PREFIX =
+  /^(RUA|R\.|AVENIDA|AV\.?|ALAMEDA|AL\.|TRAVESSA|TV\.|PRA[CÇ]A|P[CÇ]\.?|RODOVIA|ROD\.|ESTRADA|EST\.|LARGO|VIELA|BECO|S[IÍ]TIO|FAZENDA|CONDOM[IÍ]NIO|COND\.|BLOCO|QUADRA|QD\.|LOTE|LT\.|LOGRADOURO|ENDERE[CÇ]O|COMPLEMENTO|BAIRRO|DISTRITO|SETOR|CH[AÁ]CARA|N[UÚ]MERO)\b/i;
+const DATE_BR = '(\\d{2}[/.-]\\d{2}[/.-]\\d{4})';
 
 export function isValidCpf(value: unknown) {
   const cpf = digitsOnly(value);
@@ -85,10 +88,27 @@ export function isValidCnpj(value: unknown) {
 function normalizePdfText(raw: string) {
   return raw
     .replace(/\r/g, '\n')
+    .replace(/(\d{2})[.-](\d{2})[.-](\d{4})/g, '$1/$2/$3')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/[ \t]{2,}/g, ' ')
     .trim();
+}
+
+function isAddressLikeName(value: string) {
+  const cleaned = value.replace(/\s{2,}/g, ' ').trim();
+  if (!cleaned) return true;
+  if (ADDRESS_PREFIX.test(cleaned)) return true;
+  if (/,?\s*\d{1,6}\b/.test(cleaned) && ADDRESS_PREFIX.test(cleaned.split(/\s+/)[0] || '')) return true;
+  return false;
+}
+
+function acceptPersonName(raw: string | null | undefined) {
+  if (!raw) return null;
+  if (isAddressLikeName(raw)) return null;
+  const named = titleCaseName(raw);
+  if (!named || isAddressLikeName(named)) return null;
+  return named;
 }
 
 function prettyWords(raw: string, minParts = 1) {
@@ -145,42 +165,51 @@ function insuredBlock(text: string) {
 }
 
 function toIsoDate(hit: string) {
-  const [dd, mm, yyyy] = hit.split('/');
+  const normalized = hit.replace(/[.-]/g, '/');
+  const [dd, mm, yyyy] = normalized.split('/');
   const date = new Date(`${yyyy}-${mm}-${dd}T00:00:00`);
   if (Number.isNaN(date.getTime())) return null;
   return `${yyyy}-${mm}-${dd}`;
 }
 
 function findName(text: string, cpf: string | null) {
-  const block = insuredBlock(text);
-  const named = block.match(/Nome:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80}?)(?:\s+Tipo de pessoa|\s+Data de)/i);
-  const fromBlock = named ? titleCaseName(named[1]) : null;
-  if (fromBlock) return fromBlock;
-
-  const caro = text.match(/Caro\s*\(?\s*a\s*\)?\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i);
-  const fromCaro = caro ? titleCaseName(caro[1]) : null;
-  if (fromCaro) return fromCaro;
-
-  const dados = text.match(/Dados do Segurado[\s\S]{0,240}?Nome\s*\n\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i);
-  const fromDados = dados ? titleCaseName(dados[1]) : null;
-  if (fromDados) return fromDados;
-
   if (cpf) {
     const masked = cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
     const beside = text.match(
       new RegExp(`([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})\\s+${masked.replace(/[.*]/g, '\\$&')}`)
     );
-    const fromCpf = beside ? titleCaseName(beside[1]) : null;
+    const fromCpf = acceptPersonName(beside?.[1]);
     if (fromCpf) return fromCpf;
   }
+
+  const block = insuredBlock(text);
+  const named = block.match(
+    /Nome(?:\s+completo)?(?:\s+do\s+segurado)?:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80}?)(?:\s+(?:Tipo de pessoa|Data de|CPF|Sexo|Nascimento|Endere[cç]o|Logradouro))/i
+  );
+  const fromBlock = acceptPersonName(named?.[1]);
+  if (fromBlock) return fromBlock;
+
+  const seguradoNome = text.match(
+    /(?<!logradouro\s)(?<!rua\s)Nome(?:\s+completo|\s+do\s+segurado)?:\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80}?)(?:\n|$)/i
+  );
+  const fromLabeled = acceptPersonName(seguradoNome?.[1]);
+  if (fromLabeled) return fromLabeled;
+
+  const caro = text.match(/Caro\s*\(?\s*a\s*\)?\s+([A-ZÁÉÍÓÚÃÕÂÊÔÇ][A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i);
+  const fromCaro = acceptPersonName(caro?.[1]);
+  if (fromCaro) return fromCaro;
+
+  const dados = text.match(/Dados do Segurado[\s\S]{0,240}?Nome\s*\n\s*([A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{8,80})/i);
+  const fromDados = acceptPersonName(dados?.[1]);
+  if (fromDados) return fromDados;
 
   const lines = text.split('\n').slice(0, 90);
   for (const line of lines) {
     const trimmed = line.trim();
     if (!/^[A-ZÁÉÍÓÚÃÕÂÊÔÇ ]{10,80}$/.test(trimmed)) continue;
     if (trimmed.split(/\s+/).length < 3) continue;
-    const named = titleCaseName(trimmed);
-    if (named) return named;
+    const person = acceptPersonName(trimmed);
+    if (person) return person;
   }
   return null;
 }
@@ -393,24 +422,60 @@ function findBankAccount(text: string): ParsedBankAccount | null {
 }
 
 function findVigenciaRange(text: string) {
-  const individual = text.match(
-    /In[ií]cio e T[ée]rmino individual:[\s\S]{0,80}?(\d{2}\/\d{2}\/\d{4})[\s\S]{0,40}?(\d{2}\/\d{2}\/\d{4})/i
-  );
-  if (individual) {
-    return { start: toIsoDate(individual[1]), end: toIsoDate(individual[2]) };
+  const pairPatterns = [
+    new RegExp(`In[ií]cio e T[ée]rmino[\\s\\S]{0,120}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`, 'i'),
+    new RegExp(
+      `vig[eê]ncia(?:\\s+do\\s+seguro)?[\\s\\S]{0,60}?${DATE_BR}\\s*(?:a|at[eé]|-|/|at[eé]\\s+as)\\s*${DATE_BR}`,
+      'i'
+    ),
+    new RegExp(`per[ií]odo\\s+de\\s+vig[eê]ncia[\\s\\S]{0,50}?${DATE_BR}[\\s\\S]{0,50}?${DATE_BR}`, 'i'),
+    new RegExp(
+      `das?\\s+24(?::00|h(?:oras)?)?[\\s\\S]{0,50}?${DATE_BR}[\\s\\S]{0,100}?(?:at[eé]|às|as)[\\s\\S]{0,50}?${DATE_BR}`,
+      'i'
+    ),
+    new RegExp(`\\bde\\s+${DATE_BR}\\s+at[eé]\\s+${DATE_BR}`, 'i'),
+    new RegExp(
+      `In[ií]cio de Vig[eê]ncia[\\s\\S]{0,40}(?:Fim|T[ée]rmino) de Vig[eê]ncia[\\s\\S]{0,140}?${DATE_BR}[\\s\\S]{0,80}?${DATE_BR}`,
+      'i'
+    ),
+  ];
+
+  for (const re of pairPatterns) {
+    const match = text.match(re);
+    if (!match) continue;
+    const start = toIsoDate(match[1]);
+    const end = toIsoDate(match[2]);
+    if (start && end && end >= start) return { start, end };
   }
 
-  const vigLine = text.match(/In[ií]cio de Vig[eê]ncia[^\n]{0,80}?(\d{2}\/\d{2}\/\d{4})/i);
-  const vigBlock = text.match(/In[ií]cio de Vig[eê]ncia[\s\S]{0,80}?(\d{2}\/\d{2}\/\d{4})/i);
-  const clock = text.match(/das 24:00 horas do dia (\d{2}\/\d{2}\/\d{4})/i);
-  const endLine =
-    text.match(/Fim de Vig[eê]ncia[^\n]{0,80}?(\d{2}\/\d{2}\/\d{4})/i) ||
-    text.match(/T[ée]rmino de Vig[eê]ncia[^\n]{0,80}?(\d{2}\/\d{2}\/\d{4})/i);
-  const startHit = vigLine?.[1] || vigBlock?.[1] || clock?.[1] || null;
-  return {
-    start: startHit ? toIsoDate(startHit) : null,
-    end: endLine?.[1] ? toIsoDate(endLine[1]) : null,
-  };
+  const startMatch =
+    text.match(new RegExp(`In[ií]cio(?:\\s+de)?\\s+Vig[eê]ncia[\\s\\S]{0,160}?${DATE_BR}`, 'i')) ||
+    text.match(new RegExp(`das 24:00 horas do dia ${DATE_BR}`, 'i'));
+  const endMatch =
+    text.match(
+      new RegExp(`(?:Fim|T[ée]rmino|Encerramento)(?:\\s+da?)?\\s+Vig[eê]ncia[\\s\\S]{0,160}?${DATE_BR}`, 'i')
+    ) ||
+    text.match(new RegExp(`T[ée]rmino(?:\\s+individual)?[\\s\\S]{0,100}?${DATE_BR}`, 'i')) ||
+    text.match(new RegExp(`(?:validade|vencimento|v[aá]lido)\\s*at[eé][\\s\\S]{0,40}?${DATE_BR}`, 'i'));
+
+  let start = startMatch?.[1] ? toIsoDate(startMatch[1]) : null;
+  let end = endMatch?.[1] ? toIsoDate(endMatch[1]) : null;
+
+  if (start && end && end < start) {
+    end = null;
+  }
+
+  if (start && (!end || end === start)) {
+    const windowText = text.match(/vig[eê]ncia[\s\S]{0,280}/i)?.[0] || startMatch?.[0] || '';
+    const dates = Array.from(windowText.matchAll(new RegExp(DATE_BR, 'g')))
+      .map((item) => toIsoDate(item[1]))
+      .filter((item): item is string => Boolean(item));
+    const later = dates.find((item) => item > start);
+    if (later) end = later;
+    else if (end === start) end = null;
+  }
+
+  return { start, end };
 }
 
 export function parsePolicyText(raw: string, pageCount = 1): PolicyParseResult {
