@@ -89,7 +89,7 @@ export function TableView({ clients, onOpen }: Props) {
               <th>Cliente / CPF ou CNPJ</th>
               <th>Contato</th>
               <th>Local</th>
-              <th>Seguradora & Apólice</th>
+              <th>Seguradora & Proposta</th>
               <th>Etapa Operacional</th>
               <th className="text-right">Valor das apólices</th>
               <th>Retorno</th>

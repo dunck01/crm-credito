@@ -151,7 +151,7 @@ export function KanbanBoard({
                         <span className="segment-tag">{card.caseItem.insurer}</span>
                       )}
                       {card.caseItem.policyNumber && (
-                        <span className="credit-code" title="Código da apólice / crédito">
+                        <span className="credit-code" title="Número da proposta">
                           <FileText className="w-3 h-3 text-[var(--c-primeiro)]" />
                           {card.caseItem.policyNumber}
                         </span>

@@ -1124,10 +1124,10 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
               </div>
               <div className={fieldClass('policyNumber')}>
                 <label>
-                  Número da Apólice / Código de Crédito
+                  Número da Proposta
                   {fromPolicy('policyNumber') && <span className="policy-tag">apólice</span>}
                 </label>
-                <input value={caseForm.policyNumber || ''} onChange={(e) => setCaseField('policyNumber', e.target.value)} placeholder="Ex: APL-9999" className="font-mono" />
+                <input value={caseForm.policyNumber || ''} onChange={(e) => setCaseField('policyNumber', e.target.value)} placeholder="Ex: 56211027" className="font-mono" />
               </div>
             </div>
 

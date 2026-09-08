@@ -42,7 +42,7 @@ export const POLICY_FIELD_LABELS: Record<keyof ParsedPolicy, string> = {
   city: 'Cidade',
   uf: 'UF',
   cep: 'CEP',
-  policyNumber: 'Apólice',
+  policyNumber: 'Proposta',
   insurer: 'Seguradora',
   insuranceType: 'Tipo',
   insuranceValue: 'Valor',
@@ -317,36 +317,54 @@ function findName(text: string, cpf: string | null, model: PolicyModel) {
   return null;
 }
 
-function findPolicyNumber(text: string, model: PolicyModel) {
-  if (model === 'bradesco-certificado') {
-    const sucursalApolice = text.match(/Ap[oó]liceSucursal\s*\n\s*\d+\s+(\d{5,12})/i);
-    if (sucursalApolice) return sucursalApolice[1];
-  }
+function findBbProposta(text: string) {
+  // APO_BB.pdf — "Nº Proposta: 56211027" (não "Nº Apólice" / "Nº Certificado")
+  return text.match(/N[ºo°]?\s*Proposta:\s*(\d{4,12})/i)?.[1] || null;
+}
 
-  const bbApolice = text.match(/N[ºo°]?\s*Ap[oó]lice:\s*(\d{4,12})/i);
-  if (bbApolice) return bbApolice[1];
+function findBradescoCertificadoProposta(text: string) {
+  // Apolice_Prestamista.pdf / certificado-39.pdf — rótulo empilhado:
+  // Proposta
+  // 552455416
+  return text.match(/\bProposta\s*\n\s*(\d{6,12})\b/i)?.[1] || null;
+}
 
-  const dashed = text.match(/\b(\d{3}-\d{6,7}-\d{4,6})\b/);
-  if (dashed) return dashed[1];
-
-  const cover = text.match(/Ap[oó]lice(?:\s+de\s+Seguro)?[:\s]+(\d{6,12})/i);
-  if (cover) return cover[1];
-
-  const labeledBlock = text.match(/Dados da Ap[oó]lice[\s\S]{0,80}?Ap[oó]lice[^\n]*\n\s*(\d{5,12})/i);
-  if (labeledBlock) return labeledBlock[1];
-
-  const afterHeaders = text.match(
-    /Proposta\s+Sucursal\s+Ap[oó]lice[\s\S]{0,220}?(\d{6,12})\s+N\/A\s+\d{5}\.\d+/i
+function findBradescoResidencialProposta(text: string) {
+  // Apolice_residencial.pdf — "Dados da Apólice" / colunas Apólice | Proposta | Data
+  // 153791 40318900 27/03/2026  → proposta = segundo número
+  return (
+    text.match(
+      /Ap[oó]lice\s+Proposta\s+Data da Emiss[aã]o\s*\n\s*\d{4,12}\s+(\d{6,12})\s+\d{2}\/\d{2}\/\d{4}/i
+    )?.[1] ||
+    text.match(
+      /Dados da Ap[oó]lice[\s\S]{0,120}?\b(\d{4,8})\s+(\d{6,12})\s+\d{2}\/\d{2}\/\d{4}/i
+    )?.[2] ||
+    null
   );
-  if (afterHeaders) return afterHeaders[1];
+}
 
-  const certificado = text.match(/\bCertificado\s*\n\s*(\d{6,12})\b/i);
-  if (certificado) return certificado[1];
+function findBradescoVidaProposta(text: string) {
+  // Apolice_vida.pdf — cabeçalho "Proposta Sucursal Apólice Certificado Matrícula Processo Susep"
+  // depois: 551099892 N/A 15414.644722/2023-81  → proposta (não certificado 000000019803)
+  return (
+    text.match(
+      /Proposta\s+Sucursal\s+Ap[oó]lice[\s\S]{0,220}?(\d{6,12})\s+N\/A\s+\d{5}\.\d+/i
+    )?.[1] || null
+  );
+}
 
-  const sucursalApolice = text.match(/Ap[oó]liceSucursal\s*\n\s*\d+\s+(\d{5,12})/i);
-  if (sucursalApolice) return sucursalApolice[1];
+function findPolicyNumber(text: string, model: PolicyModel) {
+  if (model === 'bb-certificado') return findBbProposta(text);
+  if (model === 'bradesco-certificado') return findBradescoCertificadoProposta(text);
+  if (model === 'bradesco-residencial') return findBradescoResidencialProposta(text);
+  if (model === 'bradesco-vida') return findBradescoVidaProposta(text);
 
-  return null;
+  return (
+    findBbProposta(text) ||
+    findBradescoCertificadoProposta(text) ||
+    findBradescoResidencialProposta(text) ||
+    findBradescoVidaProposta(text)
+  );
 }
 
 function isLikelyPhone(digits: string) {

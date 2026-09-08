@@ -46,7 +46,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       data: {
         clientId: params.id,
         time: new Date().toLocaleString('pt-BR'),
-        txt: `Novo caso cadastrado${created.insurer ? ` (${created.insurer})` : ''}${created.policyNumber ? ` · apólice ${created.policyNumber}` : ''}.`,
+        txt: `Novo caso cadastrado${created.insurer ? ` (${created.insurer})` : ''}${created.policyNumber ? ` · proposta ${created.policyNumber}` : ''}.`,
       },
     });
 
