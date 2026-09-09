@@ -23,7 +23,7 @@ import {
 import { devolutionBase, splitCommission } from '@/lib/commission';
 import { catalogInsurerTitle, catalogTypeTitle, estimateDevolution } from '@/lib/devolution';
 import { formatBankAccount, isCompleteBankAccount } from '@/lib/bank-account';
-import type { ClientRecord, InsuranceCase } from '@/lib/types';
+import type { ClientBankAccount, ClientRecord, InsuranceCase } from '@/lib/types';
 import { POLICY_FIELD_LABELS, type ParsedBankAccount, type ParsedPolicy } from '@/lib/policy-parse';
 import { BankAccountsEditor } from './BankAccountsEditor';
 import { ConfirmDialog } from './ConfirmDialog';
@@ -89,6 +89,78 @@ type ConfirmState = {
   danger?: boolean;
   action: () => void | Promise<void>;
 };
+
+type PendingPolicyCase = {
+  filename: string;
+  caseForm: Partial<InsuranceCase>;
+  bankKey: { agency: string; account: string } | null;
+};
+
+function isDraftBankId(id: unknown) {
+  return typeof id === 'string' && id.startsWith('draft-');
+}
+
+function casePayload(caseForm: Partial<InsuranceCase>, bankAccountId?: string) {
+  const payload: Record<string, unknown> = {
+    policyNumber: caseForm.policyNumber,
+    insurer: caseForm.insurer,
+    insuranceType: caseForm.insuranceType,
+    identifiedAt: caseForm.identifiedAt,
+    policyStartAt: caseForm.policyStartAt,
+    policyEndAt: caseForm.policyEndAt,
+    quantity: caseForm.quantity,
+    insuranceValue: caseForm.insuranceValue,
+    obs: caseForm.obs,
+    status: caseForm.status,
+    contractStatus: caseForm.contractStatus,
+    expectedClientAmount: caseForm.expectedClientAmount,
+    receivedClientAmount: caseForm.receivedClientAmount,
+    clientReceivedAt: caseForm.clientReceivedAt,
+    companyAmount: caseForm.companyAmount,
+    companyDueAt: caseForm.companyDueAt,
+    companyPaidAmount: caseForm.companyPaidAmount,
+    companyPaidAt: caseForm.companyPaidAt,
+    myCommission: caseForm.myCommission,
+    cancellationRequestedAt: caseForm.cancellationRequestedAt,
+    cancellationConfirmedAt: caseForm.cancellationConfirmedAt,
+    cancellationNotes: caseForm.cancellationNotes,
+  };
+  const requestedBankId = bankAccountId || caseForm.bankAccountId;
+  if (requestedBankId && !isDraftBankId(requestedBankId)) payload.bankAccountId = requestedBankId;
+  return payload;
+}
+
+function addBankDraft(
+  accounts: ClientBankAccount[],
+  parsed: ParsedBankAccount | null,
+  holderName: string
+) {
+  if (!parsed?.agency || !parsed.account) return { accounts, id: '' };
+  const existing = accounts.find(
+    (item) => item.agency === parsed.agency && item.account === parsed.account
+  );
+  if (existing) return { accounts, id: existing.id };
+
+  const id = `draft-${Date.now()}-${accounts.length}`;
+  return {
+    id,
+    accounts: [
+      ...accounts,
+      {
+        id,
+        clientId: '',
+        bankName: parsed.bankName,
+        bankCode: parsed.bankCode || '',
+        agency: parsed.agency,
+        account: parsed.account,
+        accountDigit: parsed.accountDigit || '',
+        accountType: 'CORRENTE',
+        holderName,
+        isPrimary: accounts.length === 0,
+      },
+    ],
+  };
+}
 
 function applyDevolution(next: Partial<InsuranceCase>, manual: boolean): Partial<InsuranceCase> {
   if (manual) {
@@ -187,11 +259,13 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
   const [cepLoading, setCepLoading] = useState(false);
   const [cepFeedback, setCepFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [parsingPdf, setParsingPdf] = useState(false);
-  const [pendingPolicyFile, setPendingPolicyFile] = useState<File | null>(null);
+  const [pdfProgress, setPdfProgress] = useState<string | null>(null);
+  const [pendingPolicyCases, setPendingPolicyCases] = useState<PendingPolicyCase[]>([]);
   const [bankFromPolicy, setBankFromPolicy] = useState(false);
   const [policyFilled, setPolicyFilled] = useState<Set<string>>(new Set());
   const [pdfImport, setPdfImport] = useState<{
-    filename: string;
+    filenames: string[];
+    resultText: string;
     filledLabels: string[];
     missingLabels: string[];
     warning: string | null;
@@ -209,7 +283,8 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
     setCepFeedback(null);
     setPolicyFilled(new Set());
     setPdfImport(null);
-    setPendingPolicyFile(null);
+    setPendingPolicyCases([]);
+    setPdfProgress(null);
     setBankFromPolicy(false);
     setDevolutionManual(false);
     setConfirm(null);
@@ -242,7 +317,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
           caseForm.insurer ||
           caseForm.policyNumber ||
           caseForm.insuranceValue ||
-          pendingPolicyFile ||
+          pendingPolicyCases.length > 0 ||
           (form.bankAccounts || []).some((item) => isCompleteBankAccount(item))
       );
     }
@@ -266,10 +341,10 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
       (caseForm.policyEndAt || '') !== (origin.policyEndAt || '') ||
       (caseForm.status || '') !== (origin.status || '') ||
       (caseForm.bankAccountId || '') !== (origin.bankAccountId || '') ||
-      Boolean(pendingPolicyFile) ||
+      pendingPolicyCases.length > 0 ||
       JSON.stringify(form.bankAccounts || []) !== JSON.stringify(client.bankAccounts || [])
     );
-  }, [isNew, form, caseForm, client, selectedCaseId, pendingPolicyFile]);
+  }, [isNew, form, caseForm, client, selectedCaseId, pendingPolicyCases]);
 
   const requestClose = () => {
     if (!isDirty) {
@@ -409,130 +484,155 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
     }
   };
 
-  const applyParsedBank = (parsed: ParsedBankAccount | null, holderName: string) => {
-    if (!parsed || !parsed.agency || !parsed.account) return;
-    const existing = (form.bankAccounts || []).find(
-      (item) => item.agency === parsed.agency && item.account === parsed.account
-    );
-    if (existing) {
-      setCaseForm((prev) => (prev.bankAccountId ? prev : { ...prev, bankAccountId: existing.id }));
-      return;
-    }
-    const draftId = `draft-${Date.now()}`;
-    setBankFromPolicy(true);
-    setForm((prev) => ({
-      ...prev,
-      bankAccounts: [
-        ...(prev.bankAccounts || []),
-        {
-          id: draftId,
-          clientId: prev.id || '',
-          bankName: parsed.bankName,
-          bankCode: parsed.bankCode || '',
-          agency: parsed.agency,
-          account: parsed.account,
-          accountDigit: parsed.accountDigit || '',
-          accountType: 'CORRENTE',
-          holderName,
-          isPrimary: (prev.bankAccounts || []).length === 0,
-        },
-      ],
-    }));
-    setCaseForm((prev) => (prev.bankAccountId ? prev : { ...prev, bankAccountId: draftId }));
-  };
-
-  const attachPolicyFile = async (caseId: string, file: File) => {
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('type', 'APOLICE');
-    const res = await fetch(`/api/cases/${caseId}/documents`, { method: 'POST', body: fd });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error || 'Os dados foram lidos, mas o PDF não pôde ser anexado.');
-      return false;
-    }
-    return true;
-  };
-
-  const importPolicyPdf = async (file: File) => {
+  const importPolicyPdf = async (files: File[], selectionWarning?: string) => {
     setParsingPdf(true);
+    setPdfProgress(`Lendo 1 de ${files.length} apólices…`);
     setError('');
     setPdfImport(null);
-    try {
-      const fd = new FormData();
-      fd.append('file', file);
-      const res = await fetch('/api/clients/parse-policy', { method: 'POST', body: fd });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'Não foi possível ler o PDF.');
-        return;
-      }
+    const filenames = files.map((file) => file.name);
+    const warnings = selectionWarning ? [selectionWarning] : [];
+    const readNames: string[] = [];
+    const failedExtras: PendingPolicyCase[] = [];
+    let firstFilledLabels: string[] = [];
+    let firstMissingLabels: string[] = [];
+    let workingBanks = form.bankAccounts || [];
+    let workingCase = caseForm;
 
-      const fields = (data.fields || {}) as ParsedPolicy;
-      const filled = (data.filled || []) as (keyof ParsedPolicy)[];
-      const filledLabels = filled.map((key) => POLICY_FIELD_LABELS[key]).filter(Boolean);
-      setPolicyFilled(new Set(filled));
-      setForm((prev) => ({
-        ...prev,
-        name: fields.name || prev.name,
-        cpf: fields.cpf ? maskCpfCnpj(fields.cpf) : prev.cpf,
-        phone: fields.phone ? maskPhone(fields.phone) : prev.phone,
-        email: fields.email || prev.email,
-        city: fields.city || prev.city,
-        uf: fields.uf || prev.uf,
-      }));
-      setDevolutionManual(false);
-      setCaseForm((prev) =>
-        applyDevolution(
+    const createExtraCase = async (pending: PendingPolicyCase) => {
+      const response = await fetch(`/api/clients/${form.id}/cases`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(casePayload(pending.caseForm)),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data.id) {
+        return { error: data.error || 'Não foi possível criar o caso.' };
+      }
+      return { error: null };
+    };
+
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        setPdfProgress(`Lendo ${index + 1} de ${files.length} apólices…`);
+        const fd = new FormData();
+        fd.append('file', file);
+        const res = await fetch('/api/clients/parse-policy', { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          warnings.push(`${file.name}: ${data.error || 'não foi possível ler o PDF.'}`);
+          continue;
+        }
+
+        readNames.push(data.filename || file.name);
+        if (data.warning) warnings.push(`${file.name}: ${data.warning}`);
+        const fields = (data.fields || {}) as ParsedPolicy;
+        const filled = (data.filled || []) as (keyof ParsedPolicy)[];
+        const filledLabels = filled.map((key) => POLICY_FIELD_LABELS[key]).filter(Boolean);
+        const bankResult = addBankDraft(workingBanks, data.bankAccount || null, fields.name || form.name);
+        workingBanks = bankResult.accounts;
+        if (data.bankAccount) setBankFromPolicy(true);
+
+        const baseCase = index === 0 ? workingCase : emptyCase();
+        const parsedCase = applyDevolution(
           {
-            ...prev,
-            policyNumber: fields.policyNumber || prev.policyNumber,
-            insurer: catalogInsurerTitle(fields.insurer) || fields.insurer || prev.insurer,
-            insuranceType: catalogTypeTitle(fields.insuranceType) || fields.insuranceType || prev.insuranceType,
-            insuranceValue: fields.insuranceValue ?? prev.insuranceValue,
-            identifiedAt: fields.identifiedAt || prev.identifiedAt,
-            policyStartAt: fields.policyStartAt || prev.policyStartAt,
-            policyEndAt: fields.policyEndAt || prev.policyEndAt,
+            ...baseCase,
+            policyNumber: fields.policyNumber || baseCase.policyNumber || '',
+            insurer: catalogInsurerTitle(fields.insurer) || fields.insurer || baseCase.insurer || '',
+            insuranceType: catalogTypeTitle(fields.insuranceType) || fields.insuranceType || baseCase.insuranceType || '',
+            insuranceValue: fields.insuranceValue ?? baseCase.insuranceValue,
+            identifiedAt: fields.identifiedAt || baseCase.identifiedAt || '',
+            policyStartAt: fields.policyStartAt || baseCase.policyStartAt || '',
+            policyEndAt: fields.policyEndAt || baseCase.policyEndAt || '',
+            bankAccountId: data.bankAccount ? bankResult.id : baseCase.bankAccountId,
           },
           false
-        )
-      );
-      applyParsedBank(data.bankAccount || null, fields.name || form.name);
-      if (data.bankAccount) filledLabels.push('Banco');
+        );
 
-      if (!isNew && selectedCaseId) {
-        const attached = await attachPolicyFile(selectedCaseId, file);
-        setPendingPolicyFile(attached ? null : file);
-        if (attached) {
-          const refreshed = await fetch(`/api/clients/${form.id}`);
-          if (refreshed.ok) {
-            const saved = await refreshed.json();
-            const nextCase = saved.cases.find((c: InsuranceCase) => c.id === selectedCaseId);
-            if (nextCase) {
-              setCaseForm((prev) => ({ ...prev, documents: nextCase.documents }));
+        if (index === 0) {
+          firstFilledLabels = [...filledLabels];
+          if (data.bankAccount) firstFilledLabels.push('Banco');
+          const important: (keyof ParsedPolicy)[] = ['name', 'cpf', 'policyNumber', 'phone'];
+          firstMissingLabels = important
+            .filter((key) => !filled.includes(key))
+            .map((key) => POLICY_FIELD_LABELS[key]);
+          const nextForm = {
+            ...form,
+            name: fields.name || form.name,
+            cpf: fields.cpf ? maskCpfCnpj(fields.cpf) : form.cpf,
+            phone: fields.phone ? maskPhone(fields.phone) : form.phone,
+            email: fields.email || form.email,
+            city: fields.city || form.city,
+            uf: fields.uf || form.uf,
+            bankAccounts: workingBanks,
+          };
+          workingCase = { ...workingCase, ...parsedCase };
+          setPolicyFilled(new Set(filled));
+          setDevolutionManual(false);
+          setForm(nextForm);
+          setCaseForm(workingCase);
+          if (fields.cep) await handleCepChange(fields.cep, true);
+          if (fields.cpf) await lookupCpf(fields.cpf);
+        } else {
+          const pending: PendingPolicyCase = {
+            filename: file.name,
+            caseForm: parsedCase,
+            bankKey: data.bankAccount
+              ? { agency: data.bankAccount.agency, account: data.bankAccount.account }
+              : null,
+          };
+          if (isNew) {
+            setPendingPolicyCases((prev) => [...prev, pending]);
+          } else {
+            const result = await createExtraCase(pending);
+            if (result.error) {
+              failedExtras.push(pending);
+              warnings.push(`${pending.filename}: ${result.error}`);
             }
           }
         }
-      } else {
-        setPendingPolicyFile(file);
       }
 
-      const important: (keyof ParsedPolicy)[] = ['name', 'cpf', 'policyNumber', 'phone'];
-      setPdfImport({
-        filename: data.filename || file.name,
-        filledLabels,
-        missingLabels: important
-          .filter((key) => !filled.includes(key))
-          .map((key) => POLICY_FIELD_LABELS[key]),
-        warning: data.warning || null,
-      });
+      if (!isNew && files.length > 1) {
+        const refreshed = await fetch(`/api/clients/${form.id}`);
+        if (refreshed.ok) {
+          const saved = await refreshed.json();
+          setForm((prev) => ({
+            ...saved,
+            name: prev.name,
+            cpf: prev.cpf,
+            phone: prev.phone,
+            email: prev.email,
+            city: prev.city,
+            uf: prev.uf,
+            obs: prev.obs,
+            bankAccounts: prev.bankAccounts,
+          }));
+          const nextCase = saved.cases.find((c: InsuranceCase) => c.id === selectedCaseId);
+          if (nextCase) setCaseForm((prev) => ({ ...nextCase, ...prev, documents: nextCase.documents }));
+        }
+      }
 
-      if (fields.cep) await handleCepChange(fields.cep, true);
-      if (fields.cpf) await lookupCpf(fields.cpf);
+      if (failedExtras.length) setPendingPolicyCases((prev) => [...prev, ...failedExtras]);
+      if (workingBanks !== form.bankAccounts) setForm((prev) => ({ ...prev, bankAccounts: workingBanks }));
+      const count = readNames.length;
+      const resultText =
+        files.length === 1
+          ? `Dados de ${files[0].name} no formulário. Confira o que está marcado como apólice antes de salvar.`
+          : `${count} apólices lidas. A primeira (${files[0].name}) está no formulário; as outras ${isNew ? 'entram como casos novos ao salvar' : 'já foram cadastradas'}.`;
+      setPdfImport({
+        filenames,
+        resultText,
+        filledLabels: firstFilledLabels,
+        missingLabels: firstMissingLabels,
+        warning: warnings.length ? warnings.join(' ') : null,
+      });
+      if (count === 0) setError(warnings.join(' ') || 'Não foi possível ler os PDFs selecionados.');
     } catch {
       setError('Erro ao enviar o PDF. No celular, escolha o arquivo PDF (não uma foto da tela).');
     } finally {
       setParsingPdf(false);
+      setPdfProgress(null);
     }
   };
 
@@ -555,7 +655,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
         taskDate: form.taskDate,
         taskTime: form.taskTime,
         bankAccounts: completeBanks,
-        case: isNew ? caseForm : undefined,
+        case: isNew ? casePayload(caseForm) : undefined,
       };
 
       let saved: ClientRecord;
@@ -607,7 +707,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
           const caseRes = await fetch(`/api/cases/${selectedCaseId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...caseForm, bankAccountId: resolvedBank }),
+            body: JSON.stringify(casePayload(caseForm, resolvedBank)),
           });
           const caseData = await caseRes.json();
           if (!caseRes.ok) {
@@ -621,13 +721,46 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
       }
 
       const caseId = selectedCaseId || saved.cases[0]?.id;
-      if (pendingPolicyFile && caseId) {
-        const attached = await attachPolicyFile(caseId, pendingPolicyFile);
-        if (attached) {
-          setPendingPolicyFile(null);
-          const refreshed = await fetch(`/api/clients/${saved.id}`);
-          if (refreshed.ok) saved = await refreshed.json();
+      if (isNew && caseId) {
+        const wanted = completeBanks.find((item) => item.id === caseForm.bankAccountId);
+        const resolvedBank =
+          saved.bankAccounts.find((item) => item.id === caseForm.bankAccountId)?.id ||
+          saved.bankAccounts.find(
+            (item) => wanted && item.agency === wanted.agency && item.account === wanted.account
+          )?.id ||
+          '';
+        if (resolvedBank) {
+          await fetch(`/api/cases/${caseId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bankAccountId: resolvedBank }),
+          });
         }
+      }
+
+      const failedPending: PendingPolicyCase[] = [];
+      for (const pending of pendingPolicyCases) {
+        const savedBank = pending.bankKey
+          ? saved.bankAccounts.find(
+              (item) => item.agency === pending.bankKey?.agency && item.account === pending.bankKey?.account
+            )
+          : null;
+        const caseRes = await fetch(`/api/clients/${saved.id}/cases`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(casePayload(pending.caseForm, savedBank?.id)),
+        });
+        const caseData = await caseRes.json().catch(() => ({}));
+        if (!caseRes.ok || !caseData.id) {
+          failedPending.push(pending);
+          setError((current) => current || caseData.error || `Não foi possível criar ${pending.filename}.`);
+          continue;
+        }
+      }
+      setPendingPolicyCases(failedPending);
+      if (pendingPolicyCases.length > 0) {
+        const refreshed = await fetch(`/api/clients/${saved.id}`);
+        if (refreshed.ok) saved = await refreshed.json();
       }
 
       onSaved(saved);
@@ -886,11 +1019,12 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
 
           <PolicyPdfImport
             parsing={parsingPdf}
-            filename={pdfImport?.filename || null}
+            filenames={pdfImport?.filenames || []}
+            resultText={pdfImport?.resultText || null}
             filledLabels={pdfImport?.filledLabels || []}
             missingLabels={pdfImport?.missingLabels || []}
             warning={pdfImport?.warning || null}
-            pendingAttach={Boolean(pendingPolicyFile)}
+            progressLabel={pdfProgress}
             onPick={importPolicyPdf}
             onReject={setError}
           />
@@ -1077,7 +1211,7 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-[var(--c-followup)]" />
                 <h4 className="text-xs font-mono font-bold uppercase tracking-wider text-[var(--ink)] m-0">
-                  2. Casos & Apólices de Seguros ({form.cases.length || 1})
+                  2. Casos & Apólices de Seguros ({(form.cases.length || 1) + pendingPolicyCases.length})
                 </h4>
               </div>
               {!isNew && (
@@ -1106,6 +1240,21 @@ export function ClientModal({ client, isNew, currentUserName, onClose, onSaved, 
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {pendingPolicyCases.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-4">
+                {pendingPolicyCases.map((pending, index) => (
+                  <span key={`${pending.filename}-${index}`} className="case-chip">
+                    <span className="font-bold">Ao salvar</span>
+                    <span className="opacity-70 font-mono text-xs">
+                      {[pending.caseForm.insuranceType || pending.caseForm.insurer, pending.caseForm.policyNumber]
+                        .filter(Boolean)
+                        .join(' · ') || pending.filename}
+                    </span>
+                  </span>
+                ))}
               </div>
             )}
 
